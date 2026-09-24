@@ -102,4 +102,6 @@ export type InjuryReport = {
   outcomePath: OutcomePath;
   handled: boolean;
   contactsNotified: boolean;
+  /** Came from a simulated (demo) crash: never call 112 or hospitals. */
+  test?: boolean;
 };

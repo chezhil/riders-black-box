@@ -23,7 +23,9 @@ export function useIsTestCrash(crashId: string | null | undefined) {
 /** Same, for an injury report (true when it came from a simulated crash). */
 export function useIsTestReport(reportId: string | null | undefined) {
   return useApp((s) => {
-    const crashId = reportId ? s.reports.find((r) => r.id === reportId)?.crashEventId : null;
+    const report = reportId ? s.reports.find((r) => r.id === reportId) : undefined;
+    if (report?.test) return true;
+    const crashId = report?.crashEventId;
     return crashId ? s.crashes.find((c) => c.id === crashId)?.detectedVia === 'simulated' : false;
   });
 }

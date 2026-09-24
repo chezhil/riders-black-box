@@ -60,6 +60,7 @@ export default function CheckIn() {
       outcomePath: outcome,
       handled: false,
       contactsNotified: false,
+      test: isTest,
     });
     setSaving(false);
     const pathname =
