@@ -4,7 +4,9 @@ import { router, useFocusEffect } from 'expo-router';
 import * as SMS from 'expo-sms';
 import { Accelerometer } from 'expo-sensors';
 import { useCallback, useState } from 'react';
-import { Alert, Linking, Switch, View } from 'react-native';
+import { Alert, Linking, PermissionsAndroid, Platform, Switch, View } from 'react-native';
+
+import { RideMonitor } from '@modules/ride-monitor';
 
 import { Button, Card, Field, Row, Screen, Segmented, T } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
@@ -21,10 +23,17 @@ const SENSITIVITY_HELP: Record<Sensitivity, string> = {
 };
 
 type PermStatus = { location: boolean; motion: boolean; sms: boolean };
+type BackgroundStatus = {
+  notifications: boolean;
+  fullScreen: boolean;
+  battery: boolean;
+  simSms: boolean;
+};
 
 export default function SettingsScreen() {
   const settings = useApp((s) => s.settings);
   const [perms, setPerms] = useState<PermStatus | null>(null);
+  const [bg, setBg] = useState<BackgroundStatus | null>(null);
 
   const refresh = useCallback(() => {
     (async () => {
@@ -34,6 +43,15 @@ export default function SettingsScreen() {
         SMS.isAvailableAsync(),
       ]);
       setPerms({ location: loc.granted, motion: motion.granted, sms });
+      if (RideMonitor && Platform.OS === 'android') {
+        const status = RideMonitor.getSystemStatus();
+        setBg({
+          notifications: status.notificationsEnabled,
+          fullScreen: status.fullScreenIntentAllowed,
+          battery: status.ignoringBatteryOptimizations,
+          simSms: await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.SEND_SMS),
+        });
+      }
     })();
   }, []);
   useFocusEffect(refresh);
@@ -98,7 +116,7 @@ export default function SettingsScreen() {
       <Card>
         <ToggleRow
           title="Live location follow-ups"
-          body="After an alert, text contacts your updated location every 2 minutes (up to 10 min). Needs the SMS relay."
+          body="After an alert, text contacts your updated location every 2 minutes (up to 10 min). Sent automatically from your SIM or the SMS relay."
           value={settings.liveLocation}
           onChange={(liveLocation) => actions.updateSettings({ liveLocation })}
         />
@@ -117,17 +135,50 @@ export default function SettingsScreen() {
         />
         <Row style={{ marginTop: Spacing.xs }}>
           <Ionicons
-            name={relayConfigured ? 'cloud-done' : 'cloud-offline'}
+            name={relayConfigured || RideMonitor ? 'cloud-done' : 'cloud-offline'}
             size={18}
-            color={relayConfigured ? Colors.ok : Colors.textDim}
+            color={relayConfigured || RideMonitor ? Colors.ok : Colors.textDim}
           />
           <T.Dim style={{ flex: 1 }}>
             {relayConfigured
               ? 'SMS relay connected: alerts send automatically.'
-              : 'SMS relay not configured: alerts open in your SMS app for you to send.'}
+              : RideMonitor
+                ? 'Alerts are texted from your SIM automatically.'
+                : 'Alerts open in your SMS app for you to send.'}
           </T.Dim>
         </Row>
       </Card>
+
+      {RideMonitor && (
+        <>
+          <T.Label>Background protection</T.Label>
+          <Card>
+            <T.Dim>
+              These keep crash detection working while you use Google Maps or the screen is off.
+            </T.Dim>
+            <FixRow
+              label="Notifications"
+              ok={bg?.notifications}
+              onFix={() => Linking.openSettings()}
+            />
+            <FixRow
+              label="Alert over lock screen"
+              ok={bg?.fullScreen}
+              onFix={() => RideMonitor?.openFullScreenIntentSettings()}
+            />
+            <FixRow
+              label="Battery: unrestricted"
+              ok={bg?.battery}
+              onFix={() => RideMonitor?.requestIgnoreBatteryOptimizations()}
+            />
+            <FixRow
+              label="Auto-text contacts from SIM"
+              ok={bg?.simSms}
+              onFix={() => rideSession.requestPermissions().then(refresh)}
+            />
+          </Card>
+        </>
+      )}
 
       <T.Label>Permissions</T.Label>
       <Card>
@@ -196,6 +247,22 @@ function PermRow({ label, ok }: { label: string; ok: boolean | undefined }) {
         />
         <T.Dim>{ok == null ? 'Checking' : ok ? 'Allowed' : 'Not allowed'}</T.Dim>
       </Row>
+    </Row>
+  );
+}
+
+function FixRow({ label, ok, onFix }: { label: string; ok: boolean | undefined; onFix: () => void }) {
+  return (
+    <Row style={{ justifyContent: 'space-between', minHeight: 40 }}>
+      <Row gap={6} style={{ flex: 1 }}>
+        <Ionicons
+          name={ok == null ? 'ellipsis-horizontal' : ok ? 'checkmark-circle' : 'alert-circle'}
+          size={18}
+          color={ok == null ? Colors.textDim : ok ? Colors.ok : Colors.accent}
+        />
+        <T.Body style={{ flex: 1 }}>{label}</T.Body>
+      </Row>
+      {ok === false && <Button label="Fix" variant="secondary" onPress={onFix} style={{ minHeight: 36 }} />}
     </Row>
   );
 }

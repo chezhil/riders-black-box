@@ -1,14 +1,19 @@
 /**
- * Emergency-contact alerts.
- *
- * Two delivery channels:
- *  - relay: POST to a tiny server (see /relay) that sends SMS via Twilio with no
- *    user interaction. This is the only way to alert contacts when the rider is
- *    unresponsive. Enabled by EXPO_PUBLIC_ALERT_RELAY_URL.
+ * Emergency-contact alerts. Delivery channels, in order of preference:
+ *  - relay: POST to a tiny server (see /relay) that sends SMS via Twilio.
+ *    Enabled by EXPO_PUBLIC_ALERT_RELAY_URL.
+ *  - sim: texts straight from the phone's SIM (Android build with the native
+ *    RideMonitor module and SEND_SMS permission). No tap needed.
  *  - sms_composer: opens the phone's SMS app pre-filled with every contact and
- *    the message. Works everywhere but needs someone to tap Send.
+ *    the message. Works everywhere (incl. Expo Go) but needs someone to tap Send.
+ *
+ * When the rider doesn't answer the crash countdown, the native service sends
+ * the alert itself from buildAlertTemplate(), so it works in the background.
  */
 import * as SMS from 'expo-sms';
+import { PermissionsAndroid, Platform } from 'react-native';
+
+import { RideMonitor } from '@modules/ride-monitor';
 
 import { formatTime, mapsLink } from './geo';
 import { getState } from './store';
@@ -30,14 +35,22 @@ const SEVERITY_TEXT: Record<AlertSeverity, string> = {
 };
 
 export function buildAlertMessage(severity: AlertSeverity, location: LatLng | null, at = Date.now()) {
+  return renderAlert(severity, location ? mapsLink(location) : '(location unavailable)', formatTime(at));
+}
+
+/** The no-response alert with {LINK} and {TIME} placeholders, filled in by the native service. */
+export function buildAlertTemplate() {
+  return renderAlert('unresponsive', '{LINK}', '{TIME}');
+}
+
+function renderAlert(severity: AlertSeverity, where: string, time: string) {
   const { profile, settings } = getState();
   const name = profile.name.trim() || 'Your contact';
-  const where = location ? mapsLink(location) : '(location unavailable)';
   const flag = severity === 'severe' ? '🚨 SEVERE 🚨 ' : '🚨 ';
 
   let msg =
     `${flag}${name} may have had a bike accident near ${where}. ` +
-    `Last update: ${formatTime(at)}. ` +
+    `Last update: ${time}. ` +
     `Severity self-reported as: ${SEVERITY_TEXT[severity]}. ` +
     `Please check on them or call them directly${profile.phone ? `: ${profile.phone}` : ''}.`;
 
@@ -84,6 +97,12 @@ async function sendToContacts(
     }
   }
 
+  if (RideMonitor && (await canSendFromSim())) {
+    const { sent, error } = await RideMonitor.sendSms(phones, body);
+    if (sent > 0) return { channel: 'sim', delivered: true, error: error ?? undefined };
+    console.warn('SIM send failed', error);
+  }
+
   if (opts.allowComposer === false) {
     return { channel: 'none', delivered: false, error: 'SMS relay unavailable' };
   }
@@ -100,11 +119,11 @@ let followUpTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * After an alert, keep contacts updated with the rider's latest position.
- * Only possible through the relay: the composer would need a tap each time.
+ * Only possible through the relay or the SIM: the composer would need a tap each time.
  */
 export function startLocationFollowUps(getLocation: () => Promise<LatLng | null>) {
   stopLocationFollowUps();
-  if (!RELAY_URL || !getState().settings.liveLocation) return;
+  if ((!RELAY_URL && !RideMonitor) || !getState().settings.liveLocation) return;
   let sent = 0;
   followUpTimer = setInterval(async () => {
     sent += 1;
@@ -121,4 +140,9 @@ export function startLocationFollowUps(getLocation: () => Promise<LatLng | null>
 export function stopLocationFollowUps() {
   if (followUpTimer) clearInterval(followUpTimer);
   followUpTimer = null;
+}
+
+async function canSendFromSim() {
+  if (Platform.OS !== 'android') return false;
+  return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.SEND_SMS);
 }

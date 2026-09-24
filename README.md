@@ -22,7 +22,33 @@ Built with Expo (React Native + TypeScript). Runs on Android and iOS; Android fi
 
 All data is stored **locally on the phone** (AsyncStorage), so the app works with no signal on highways.
 
-## Run it on your phone
+## Background mode (Android build)
+
+In the installed Android app, a ride keeps going while you use **Google Maps as your navigation** or the screen is off:
+
+- A **foreground service** (`modules/ride-monitor`, Kotlin) runs GPS logging, hard-brake detection and the crash detector (a Kotlin port of `src/lib/crash-detector.ts`), with a persistent "Ride in progress" notification and a partial wake lock.
+- On a crash it raises an **alarm notification** with a live countdown, an **I'M FINE** action, and a **full-screen "Are you OK?" screen over the lock screen** or over Google Maps.
+- If nobody responds, the service **texts every emergency contact from the phone's SIM** (`SEND_SMS`) with a Google Maps link to the crash location. This works while the app is in the background.
+- Settings → **Background protection** checks notifications, lock-screen alerts, unrestricted battery (important on Motorola/Xiaomi/Samsung) and SMS permission.
+
+Expo Go and iOS fall back to the foreground-only JS engine automatically.
+
+### Build and install locally (Android)
+
+Requires JDK 17 and the Android SDK (platform 36, build-tools 36.0.0, NDK 27.1.12297006):
+
+```bash
+brew install openjdk@17 && brew install --cask android-commandlinetools
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17 ANDROID_HOME=~/Library/Android/sdk
+sdkmanager --sdk_root=$ANDROID_HOME "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
+npx expo prebuild --platform android
+cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+adb install -r app/build/outputs/apk/release/app-release.apk
+```
+
+The release APK is self-contained (JS bundled), so it works away from your computer. It's signed with the debug keystore, which is fine for sideloading but not for the Play Store.
+
+## Run it in Expo Go (quick preview)
 
 1. Install **Expo Go** from the Play Store (Android) or App Store (iOS).
 2. On your computer:
@@ -91,16 +117,18 @@ src/
     hospitals.ts       Overpass (OpenStreetMap) hospital lookup
     injury.ts          Body parts, severity routing, first-aid content
     store.ts           Local-first persisted store
+modules/ride-monitor/  Native Android foreground service: GPS, crash detector, countdown, SIM SMS, lock-screen alert
 relay/server.mjs       Optional Twilio SMS relay
 scripts/               Detector simulation checks
 ```
 
 ## Known limitations
 
-- **Keep the app open during a ride.** Expo Go only tracks location and sensors in the foreground, so the ride screen keeps the display on. Background tracking and showing the crash alert over the lock screen need a development build (`expo-task-manager` + a foreground service). That's planned for the next version.
-- Without the relay, alerts open in the SMS app and someone has to tap Send.
+- **Expo Go / iOS:** foreground only (keep the app open). Background mode needs the Android build above.
+- **Auto SMS from the SIM** uses `SEND_SMS`, which Google Play restricts. For a Play Store release, switch no-response alerts to the Twilio relay.
+- Some Android skins kill background apps aggressively. Set battery to "Unrestricted" (Settings → Background protection).
 - Hospital data comes from OpenStreetMap: good coverage in Indian cities, patchier in rural areas. A Google Maps search fallback is always available.
 
 ## Roadmap (v2)
 
-ML-based crash detection · background ride tracking and lock-screen alert (dev build) · backend sync · insurance/fleet integrations · helmet/wearable sensors · community ride features.
+ML-based crash detection · iOS background mode · live-tracking link · backend sync · insurance/fleet integrations · helmet/wearable sensors · community ride features.

@@ -12,20 +12,35 @@ import { rideSession } from '@/lib/ride-session';
 import { actions, getState, useApp } from '@/lib/store';
 
 export default function CrashAlert() {
-  const { crashId } = useLocalSearchParams<{ crashId: string }>();
-  const total = useApp((s) => s.settings.countdownSeconds);
+  const { crashId, deadline: deadlineParam } = useLocalSearchParams<{ crashId: string; deadline?: string }>();
+  const countdownSeconds = useApp((s) => s.settings.countdownSeconds);
+  // When the native service owns the countdown, follow its deadline exactly.
+  const nativeDeadline = deadlineParam ? Number(deadlineParam) : null;
+  const [deadline] = useState(() => nativeDeadline ?? Date.now() + countdownSeconds * 1000);
+  const total = countdownSeconds;
   const [left, setLeft] = useState(total);
   const done = useRef(false);
 
-  // Alarm: vibrate continuously until the rider responds.
+  // Alarm: vibrate continuously until the rider responds (the native service vibrates on its own).
   useEffect(() => {
-    Vibration.vibrate([0, 700, 400], true);
+    if (!nativeDeadline) Vibration.vibrate([0, 700, 400], true);
     const back = BackHandler.addEventListener('hardwareBackPress', () => true);
     return () => {
       Vibration.cancel();
       back.remove();
     };
-  }, []);
+  }, [nativeDeadline]);
+
+  // Answered from the notification or lock screen, or the service already texted contacts.
+  useEffect(
+    () =>
+      rideSession.onCrashResolved((r) => {
+        if (r.id !== crashId || !finish()) return;
+        if (r.outcome === 'fine') router.back();
+        else router.replace({ pathname: '/checkin', params: { crashId, auto: r.outcome === 'alerted' ? '1' : '' } });
+      }),
+    [crashId],
+  );
 
   function finish() {
     if (done.current) return false;
@@ -37,6 +52,7 @@ export default function CrashAlert() {
   function onFine() {
     if (!finish()) return;
     actions.updateCrash(crashId, { response: 'confirmed_fine' });
+    rideSession.resolveCrash('fine');
     rideSession.resumeDetection();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     router.back();
@@ -45,6 +61,7 @@ export default function CrashAlert() {
   function onNeedHelp() {
     if (!finish()) return;
     actions.updateCrash(crashId, { response: 'needs_help' });
+    rideSession.resolveCrash('help');
     router.replace({ pathname: '/checkin', params: { crashId } });
   }
 
@@ -52,6 +69,8 @@ export default function CrashAlert() {
     if (!finish()) return;
     actions.updateCrash(crashId, { response: 'no_response' });
     router.replace({ pathname: '/checkin', params: { crashId, auto: '1' } });
+    // The native service texts contacts from the SIM itself.
+    if (nativeDeadline) return;
 
     const crash = getState().crashes.find((c) => c.id === crashId);
     (async () => {
@@ -67,9 +86,8 @@ export default function CrashAlert() {
   }
 
   useEffect(() => {
-    const started = Date.now();
     const id = setInterval(() => {
-      const remaining = Math.max(0, total - Math.floor((Date.now() - started) / 1000));
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       setLeft(remaining);
       if (remaining === 0) {
         clearInterval(id);
@@ -78,7 +96,7 @@ export default function CrashAlert() {
     }, 250);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [total]);
+  }, [deadline]);
 
   const progress = left / total;
   const R = 110;

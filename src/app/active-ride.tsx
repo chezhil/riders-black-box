@@ -1,14 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useEffect, useSyncExternalStore } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
 
 import { RouteTrail } from '@/components/route-trail';
 import { Button, Card, Row, Screen, Stat, T } from '@/components/ui';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useNow } from '@/hooks/use-now';
 import { formatDistance, formatDuration, toKmh } from '@/lib/geo';
-import { rideSession } from '@/lib/ride-session';
+import { backgroundCapable, rideSession } from '@/lib/ride-session';
 
 export default function ActiveRide() {
   const ride = useSyncExternalStore(rideSession.subscribe, rideSession.getSnapshot);
@@ -78,9 +78,21 @@ export default function ActiveRide() {
         markers={ride.hardBrakes.map((b) => ({ ...b, color: Colors.danger }))}
       />
       <T.Dim style={{ textAlign: 'center', fontSize: 12 }}>
-        {ride.gpsAccuracy != null ? `GPS ±${Math.round(ride.gpsAccuracy)} m · ` : ''}Keep this screen open.
-        It stays on while you ride.
+        {ride.gpsAccuracy != null ? `GPS ±${Math.round(ride.gpsAccuracy)} m · ` : ''}
+        {backgroundCapable
+          ? 'Tracking continues in the background. Switch to Google Maps any time.'
+          : 'Keep this screen open. It stays on while you ride.'}
       </T.Dim>
+
+      {backgroundCapable && (
+        <Button
+          label="Open Google Maps"
+          icon="navigate"
+          variant="secondary"
+          size="lg"
+          onPress={() => Linking.openURL('https://www.google.com/maps')}
+        />
+      )}
 
       <Button label="I need help" icon="medkit" variant="danger" size="lg" onPress={() => router.push('/checkin')} />
       <Button label="End ride" icon="stop" variant="secondary" size="lg" onPress={endRide} />

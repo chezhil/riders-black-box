@@ -26,7 +26,12 @@ const PERMISSIONS = [
   {
     icon: 'chatbubbles' as const,
     title: 'SMS and calls',
-    body: 'Sends your emergency alert and places emergency calls. Nothing is sent without a detected crash or your tap.',
+    body: 'Texts your emergency contacts from your SIM if you don\'t answer after a crash, and places emergency calls. Nothing is sent without a detected crash or your tap.',
+  },
+  {
+    icon: 'notifications' as const,
+    title: 'Notifications',
+    body: 'Keeps crash detection running while you use Google Maps, and shows the "Are you OK?" alert over other apps and the lock screen.',
   },
 ];
 

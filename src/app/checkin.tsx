@@ -8,7 +8,7 @@ import { Button, Card, Disclaimer, Field, Row, Screen, Segmented, T } from '@/co
 import { Colors, Radius, SeverityColors, Spacing } from '@/constants/theme';
 import { relayConfigured } from '@/lib/alerts';
 import { BODY_PART_LABELS, SEVERITY_INFO, highestSeverity, outcomeFor } from '@/lib/injury';
-import { rideSession } from '@/lib/ride-session';
+import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { actions, getState, newId, useApp } from '@/lib/store';
 import type { BodyPart, Severity } from '@/lib/types';
 
@@ -79,8 +79,8 @@ export default function CheckIn() {
             <Ionicons name="alert-circle" size={20} color={Colors.danger} />
             <T.Body style={{ flex: 1, fontWeight: '700' }}>
               {crash?.contactsNotified
-                ? 'Your emergency contacts have been alerted'
-                : relayConfigured
+                ? 'Your emergency contacts have been texted your location'
+                : relayConfigured || backgroundCapable
                   ? 'Alerting your emergency contacts…'
                   : 'Alert message ready in your SMS app. Tap Send.'}
             </T.Body>

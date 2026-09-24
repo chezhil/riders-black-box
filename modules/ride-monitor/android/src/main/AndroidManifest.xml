@@ -1,0 +1,33 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <uses-permission android:name="android.permission.SEND_SMS" />
+  <uses-permission android:name="android.permission.VIBRATE" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+  <application>
+    <service
+      android:name="expo.modules.ridemonitor.RideMonitorService"
+      android:exported="false"
+      android:foregroundServiceType="location" />
+
+    <receiver
+      android:name="expo.modules.ridemonitor.CrashActionReceiver"
+      android:exported="false" />
+
+    <activity
+      android:name="expo.modules.ridemonitor.CrashAlertActivity"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:launchMode="singleTask"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:taskAffinity="com.chezhil.ridersblackbox.crash"
+      android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+  </application>
+</manifest>

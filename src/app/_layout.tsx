@@ -4,8 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 
 import { Colors } from '@/constants/theme';
-import { rideSession } from '@/lib/ride-session';
-import { actions, newId, useApp } from '@/lib/store';
+import { pendingNativeCrash, rideSession, type CrashTrigger } from '@/lib/ride-session';
+import { actions, getState, newId, useApp } from '@/lib/store';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -29,10 +29,11 @@ export default function RootLayout() {
   }, []);
 
   // Any detected (or simulated) crash opens the full-screen "Are you OK?" alert.
-  useEffect(
-    () =>
-      rideSession.onCrash((trigger) => {
-        const id = newId();
+  useEffect(() => {
+    if (!loaded) return;
+    const open = (trigger: CrashTrigger) => {
+      const id = trigger.id ?? newId();
+      if (!getState().crashes.some((c) => c.id === id)) {
         actions.addCrash({
           id,
           rideId: trigger.rideId,
@@ -44,10 +45,47 @@ export default function RootLayout() {
           contactsNotified: false,
           notifyChannel: 'none',
         });
-        router.push({ pathname: '/crash-alert', params: { crashId: id } });
-      }),
-    [],
-  );
+      }
+      router.push({
+        pathname: '/crash-alert',
+        params: { crashId: id, deadline: trigger.deadline ? String(trigger.deadline) : '' },
+      });
+    };
+    const offCrash = rideSession.onCrash(open);
+
+    // Native service answered/escalated the crash (notification, lock screen, or timeout).
+    const offResolved = rideSession.onCrashResolved((r) => {
+      actions.updateCrash(r.id, {
+        response: r.outcome === 'fine' ? 'confirmed_fine' : r.outcome === 'help' ? 'needs_help' : 'no_response',
+        ...(r.outcome === 'alerted'
+          ? { contactsNotified: r.smsSent > 0, notifyChannel: r.smsSent > 0 ? 'sim' : 'none' }
+          : {}),
+        ...(r.location ? { location: r.location } : {}),
+      });
+    });
+
+    // Reopened the app mid-countdown (e.g. from the notification) before JS saw the event.
+    const pending = pendingNativeCrash();
+    const pendingTimer =
+      pending && !getState().crashes.some((c) => c.id === pending.id)
+        ? setTimeout(() =>
+            open({
+              id: pending.id,
+              rideId: rideSession.getSnapshot().rideId,
+              location: pending.lat != null && pending.lng != null ? { lat: pending.lat, lng: pending.lng } : null,
+              peakG: pending.peakG,
+              via: pending.via,
+              deadline: pending.deadline,
+            }),
+          300,
+          )
+        : null;
+    return () => {
+      if (pendingTimer) clearTimeout(pendingTimer);
+      offCrash();
+      offResolved();
+    };
+  }, [loaded]);
 
   if (!loaded) return null;
 

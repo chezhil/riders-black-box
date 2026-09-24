@@ -9,7 +9,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { notifyContacts, relayConfigured, startLocationFollowUps, type NotifyResult } from '@/lib/alerts';
 import { finishIncident } from '@/lib/flow';
 import { mapsLink } from '@/lib/geo';
-import { rideSession } from '@/lib/ride-session';
+import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { actions, useApp } from '@/lib/store';
 import type { LatLng } from '@/lib/types';
 
@@ -73,8 +73,8 @@ export default function Emergency() {
       ? 'Alerting your emergency contacts…'
       : notify == null
         ? 'Getting your location…'
-        : notify.channel === 'relay'
-          ? `SEVERE alert sent to ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
+        : notify.channel === 'relay' || notify.channel === 'sim'
+          ? `SEVERE alert texted to ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
           : notify.channel === 'sms_composer'
             ? 'SEVERE alert opened in your SMS app. Make sure it was sent.'
             : `Contacts not alerted: ${notify.error}`;
@@ -142,7 +142,7 @@ export default function Emergency() {
         {notify !== 'sending' && notify != null && (
           <Button label="Send alert again" icon="refresh" variant="secondary" onPress={() => sendAlert(location)} />
         )}
-        {!relayConfigured && (
+        {!relayConfigured && !backgroundCapable && (
           <T.Dim style={{ fontSize: 12 }}>
             Tip: set up the SMS relay so alerts go out automatically, with no tap needed.
           </T.Dim>

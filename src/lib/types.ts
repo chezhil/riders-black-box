@@ -49,7 +49,7 @@ export type Ride = {
 
 export type CrashResponse = 'pending' | 'confirmed_fine' | 'no_response' | 'needs_help';
 
-export type NotifyChannel = 'relay' | 'sms_composer' | 'none';
+export type NotifyChannel = 'relay' | 'sim' | 'sms_composer' | 'none';
 
 export type CrashEvent = {
   id: string;

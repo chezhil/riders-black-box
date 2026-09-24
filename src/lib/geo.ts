@@ -13,7 +13,7 @@ export function distanceM(a: LatLng, b: LatLng) {
 }
 
 export function mapsLink(p: LatLng) {
-  return `https://maps.google.com/?q=${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
+  return `https://www.google.com/maps/search/?api=1&query=${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
 }
 
 export function directionsLink(p: LatLng) {
