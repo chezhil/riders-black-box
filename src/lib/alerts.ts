@@ -34,13 +34,24 @@ const SEVERITY_TEXT: Record<AlertSeverity, string> = {
   severe: 'SEVERE',
 };
 
-export function buildAlertMessage(severity: AlertSeverity, location: LatLng | null, at = Date.now()) {
-  return renderAlert(severity, location ? mapsLink(location) : '(location unavailable)', formatTime(at));
+/** `test`: a simulated crash. Same message, clearly marked so contacts know it's a drill. */
+type AlertOptions = { test?: boolean };
+
+const TEST_PREFIX = "🧪 TEST ALERT from Rider's Black Box: this is a simulated crash, no action needed. ";
+
+export function buildAlertMessage(
+  severity: AlertSeverity,
+  location: LatLng | null,
+  { test = false }: AlertOptions = {},
+) {
+  const msg = renderAlert(severity, location ? mapsLink(location) : '(location unavailable)', formatTime(Date.now()));
+  return test ? TEST_PREFIX + msg : msg;
 }
 
 /** The no-response alert with {LINK} and {TIME} placeholders, filled in by the native service. */
-export function buildAlertTemplate() {
-  return renderAlert('unresponsive', '{LINK}', '{TIME}');
+export function buildAlertTemplate({ test = false }: AlertOptions = {}) {
+  const msg = renderAlert('unresponsive', '{LINK}', '{TIME}');
+  return test ? TEST_PREFIX + msg : msg;
 }
 
 function renderAlert(severity: AlertSeverity, where: string, time: string) {
@@ -68,8 +79,8 @@ function renderAlert(severity: AlertSeverity, where: string, time: string) {
 
 export type NotifyResult = { channel: NotifyChannel; delivered: boolean; error?: string };
 
-export function notifyContacts(severity: AlertSeverity, location: LatLng | null) {
-  return sendToContacts(buildAlertMessage(severity, location));
+export function notifyContacts(severity: AlertSeverity, location: LatLng | null, opts: AlertOptions = {}) {
+  return sendToContacts(buildAlertMessage(severity, location, opts));
 }
 
 async function sendToContacts(

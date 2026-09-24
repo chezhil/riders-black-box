@@ -8,6 +8,7 @@ import Svg, { Circle } from 'react-native-svg';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { notifyContacts, startLocationFollowUps } from '@/lib/alerts';
+import { useIsTestCrash } from '@/lib/flow';
 import { rideSession } from '@/lib/ride-session';
 import { actions, getState, useApp } from '@/lib/store';
 
@@ -20,6 +21,7 @@ export default function CrashAlert() {
   const total = countdownSeconds;
   const [left, setLeft] = useState(total);
   const done = useRef(false);
+  const isTest = useIsTestCrash(crashId);
 
   // Alarm: vibrate continuously until the rider responds (the native service vibrates on its own).
   useEffect(() => {
@@ -75,13 +77,13 @@ export default function CrashAlert() {
     const crash = getState().crashes.find((c) => c.id === crashId);
     (async () => {
       const location = crash?.location ?? (await rideSession.currentLocation());
-      const result = await notifyContacts('unresponsive', location);
+      const result = await notifyContacts('unresponsive', location, { test: isTest });
       actions.updateCrash(crashId, {
         location,
         contactsNotified: result.delivered,
         notifyChannel: result.channel,
       });
-      startLocationFollowUps(() => rideSession.currentLocation());
+      if (!isTest) startLocationFollowUps(() => rideSession.currentLocation());
     })();
   }
 
@@ -105,11 +107,16 @@ export default function CrashAlert() {
   return (
     <SafeAreaView style={styles.screen}>
       <View style={styles.top}>
-        <Ionicons name="warning" size={40} color={Colors.danger} />
+        {isTest ? (
+          <Text style={styles.testTag}>TEST · SIMULATED CRASH</Text>
+        ) : (
+          <Ionicons name="warning" size={40} color={Colors.danger} />
+        )}
         <Text style={styles.title}>Are you OK?</Text>
         <Text style={styles.sub}>
-          We detected a possible crash. If you don&apos;t respond, your emergency contacts will get your
-          location.
+          {isTest
+            ? "If you don't respond, only your emergency contacts get a text, clearly marked as a test."
+            : "We detected a possible crash. If you don't respond, your emergency contacts will get your location."}
         </Text>
       </View>
 
@@ -165,6 +172,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   top: { alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.lg },
+  testTag: {
+    color: Colors.info,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    borderWidth: 1,
+    borderColor: Colors.info,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    overflow: 'hidden',
+  },
   title: { color: Colors.text, fontSize: 40, fontWeight: '900', letterSpacing: -1 },
   sub: { color: Colors.textDim, fontSize: 16, textAlign: 'center', lineHeight: 22 },
   ring: { alignItems: 'center', justifyContent: 'center' },

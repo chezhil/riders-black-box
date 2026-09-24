@@ -10,6 +10,8 @@ import type { EventSubscription } from 'expo-modules-core';
 
 export type NativePoint = { lat: number; lng: number; t: number; speed: number | null };
 export type NativeHardBrake = { lat: number; lng: number; t: number; decel: number };
+export type BumpReason = 'moving_again' | 'not_moving' | 'handling' | 'no_fall';
+export type NativeBump = { at: number; peakG: number; reason: BumpReason };
 
 export type NativeCrash = {
   id: string;
@@ -32,10 +34,12 @@ export type NativeSnapshot = {
   maxSpeed: number;
   gpsAccuracy: number | null;
   liveG: number;
+  /** Crash detection is armed (rider moved recently, or motion gating is off). */
+  armed: boolean;
   pointCount: number;
   lastPoint: NativePoint | null;
   hardBrakes: NativeHardBrake[];
-  lastBump: { at: number; peakG: number } | null;
+  lastBump: NativeBump | null;
   crash: NativeCrash | null;
 };
 
@@ -48,18 +52,24 @@ export type StartOptions = {
     stillStdG: number;
     stillGyro: number;
     orientationDeg: number;
+    requireMotion: boolean;
+    minSpeedMps: number;
+    handlingPeakG: number;
+    handlingPeaks: number;
   };
   countdownSeconds: number;
   contactPhones: string[];
   /** Alert SMS with {LINK} and {TIME} placeholders. */
   alertTemplate: string;
+  /** Same, marked as a test; used for simulated crashes. */
+  testAlertTemplate: string;
   autoSms: boolean;
 };
 
 type Events = {
   onRideUpdate: (s: NativeSnapshot) => void;
-  onLiveG: (e: { g: number }) => void;
-  onBump: (e: { at: number; peakG: number }) => void;
+  onLiveG: (e: { g: number; armed: boolean }) => void;
+  onBump: (e: NativeBump) => void;
   onCrash: (c: NativeCrash) => void;
   onCrashResolved: (c: NativeCrash) => void;
 };

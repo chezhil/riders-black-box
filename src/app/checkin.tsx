@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { BodyMap, type BodyView } from '@/components/body-map';
-import { Button, Card, Disclaimer, Field, Row, Screen, Segmented, T } from '@/components/ui';
+import { Button, Card, Disclaimer, Field, Row, Screen, Segmented, T, TestBanner } from '@/components/ui';
 import { Colors, Radius, SeverityColors, Spacing } from '@/constants/theme';
 import { relayConfigured } from '@/lib/alerts';
+import { useIsTestCrash } from '@/lib/flow';
 import { BODY_PART_LABELS, SEVERITY_INFO, highestSeverity, outcomeFor } from '@/lib/injury';
 import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { actions, getState, newId, useApp } from '@/lib/store';
@@ -22,6 +23,7 @@ export default function CheckIn() {
   const [selected, setSelected] = useState<Partial<Record<BodyPart, Severity | null>>>({});
   const [notes, setNotes] = useState<Partial<Record<BodyPart, string>>>({});
   const [saving, setSaving] = useState(false);
+  const isTest = useIsTestCrash(crashId);
 
   const parts = Object.keys(selected) as BodyPart[];
   const allRated = parts.length > 0 && parts.every((p) => selected[p]);
@@ -72,6 +74,7 @@ export default function CheckIn() {
   return (
     <Screen edges={['bottom', 'left', 'right']}>
       <Stack.Screen options={{ title: step === 'map' ? 'Where does it hurt?' : 'How bad is it?' }} />
+      {isTest && <TestBanner />}
 
       {auto === '1' && (
         <Card style={{ borderColor: Colors.danger, backgroundColor: Colors.dangerDim }}>
@@ -79,7 +82,9 @@ export default function CheckIn() {
             <Ionicons name="alert-circle" size={20} color={Colors.danger} />
             <T.Body style={{ flex: 1, fontWeight: '700' }}>
               {crash?.contactsNotified
-                ? 'Your emergency contacts have been texted your location'
+                ? isTest
+                  ? 'Test alert texted to your emergency contacts'
+                  : 'Your emergency contacts have been texted your location'
                 : relayConfigured || backgroundCapable
                   ? 'Alerting your emergency contacts…'
                   : 'Alert message ready in your SMS app. Tap Send.'}

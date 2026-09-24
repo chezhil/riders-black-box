@@ -101,7 +101,9 @@ export function Button({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      disabled={disabled || loading}
+      // Always a real boolean: React Native only re-enables the native view when it receives an
+      // explicit `false`. `undefined` after being disabled leaves only the label tappable.
+      disabled={Boolean(disabled || loading)}
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
@@ -239,6 +241,18 @@ export function Disclaimer({ children }: { children?: ReactNode }) {
   );
 }
 
+/** Shown on every screen of a simulated crash. */
+export function TestBanner({ text }: { text?: string }) {
+  return (
+    <Row style={styles.testBanner} gap={Spacing.sm}>
+      <Ionicons name="flask" size={18} color={Colors.info} />
+      <Text style={styles.testBannerText}>
+        {text ?? 'TEST: simulated crash. Only your emergency contacts are messaged (marked as a test). 112 and hospitals are never called.'}
+      </Text>
+    </Row>
+  );
+}
+
 export function ListItem({
   icon,
   iconColor = Colors.textDim,
@@ -349,6 +363,15 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     backgroundColor: Colors.surface,
   },
+  testBanner: {
+    alignItems: 'flex-start',
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.info,
+    backgroundColor: '#0C2230',
+  },
+  testBannerText: { flex: 1, color: Colors.text, fontSize: 13, fontWeight: '600', lineHeight: 18 },
   listIcon: {
     width: 38,
     height: 38,

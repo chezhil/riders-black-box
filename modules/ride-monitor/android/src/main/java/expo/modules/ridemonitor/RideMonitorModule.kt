@@ -20,6 +20,10 @@ class DetectorConfigRecord : Record {
   @Field val stillStdG: Double = 0.15
   @Field val stillGyro: Double = 0.5
   @Field val orientationDeg: Double = 40.0
+  @Field val requireMotion: Boolean = true
+  @Field val minSpeedMps: Double = 3.0
+  @Field val handlingPeakG: Double = 2.0
+  @Field val handlingPeaks: Int = 3
 }
 
 class StartOptions : Record {
@@ -28,6 +32,7 @@ class StartOptions : Record {
   @Field val countdownSeconds: Int = 30
   @Field val contactPhones: List<String> = emptyList()
   @Field val alertTemplate: String = ""
+  @Field val testAlertTemplate: String = ""
   @Field val autoSms: Boolean = true
 }
 
@@ -50,16 +55,23 @@ class RideMonitorModule : Module() {
     }
 
     OnActivityEntersForeground { RideMonitor.appInForeground = true }
-    OnActivityEntersBackground { RideMonitor.appInForeground = false }
+    OnActivityEntersBackground {
+      RideMonitor.appInForeground = false
+      RideMonitor.service?.onAppBackgrounded()
+    }
 
     AsyncFunction("start") { options: StartOptions ->
       val d = options.detector
       RideMonitorService.pendingConfig = RideConfig(
         rideId = options.rideId,
-        detector = DetectorConfig(d.impactG, d.settleMs.toLong(), d.stillMs.toLong(), d.stillStdG, d.stillGyro, d.orientationDeg),
+        detector = DetectorConfig(
+          d.impactG, d.settleMs.toLong(), d.stillMs.toLong(), d.stillStdG, d.stillGyro, d.orientationDeg,
+          d.requireMotion, d.minSpeedMps, d.handlingPeakG, d.handlingPeaks,
+        ),
         countdownSeconds = options.countdownSeconds,
         contactPhones = options.contactPhones,
         alertTemplate = options.alertTemplate,
+        testAlertTemplate = options.testAlertTemplate,
         autoSms = options.autoSms,
       )
       val intent = Intent(context, RideMonitorService::class.java).setAction(RideMonitorService.ACTION_START)

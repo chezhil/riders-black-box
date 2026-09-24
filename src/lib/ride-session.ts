@@ -16,10 +16,20 @@ import * as Location from 'expo-location';
 import { Accelerometer, Gyroscope } from 'expo-sensors';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 
-import { RideMonitor, type NativeCrash, type NativeSnapshot } from '@modules/ride-monitor';
+import {
+  RideMonitor,
+  type BumpReason,
+  type NativeCrash,
+  type NativeSnapshot,
+} from '@modules/ride-monitor';
 
 import { buildAlertTemplate } from './alerts';
-import { CrashDetector, SENSITIVITY_PRESETS, type DetectorEvent } from './crash-detector';
+import {
+  CrashDetector,
+  SENSITIVITY_PRESETS,
+  type DetectorConfig,
+  type DetectorEvent,
+} from './crash-detector';
 import { distanceM } from './geo';
 import { actions, getState, newId } from './store';
 import type { HardBrakeEvent, LatLng, Ride, RoutePoint } from './types';
@@ -47,7 +57,9 @@ export type RideSnapshot = {
   /** Live acceleration magnitude in g, for the monitoring indicator. */
   liveG: number;
   monitoring: boolean;
-  lastBump: { at: number; peakG: number } | null;
+  /** Crash detection is armed: the rider has been moving recently (or motion gating is off). */
+  armed: boolean;
+  lastBump: { at: number; peakG: number; reason: BumpReason } | null;
 };
 
 export type CrashTrigger = {
@@ -82,8 +94,14 @@ const IDLE: RideSnapshot = {
   gpsAccuracy: null,
   liveG: 1,
   monitoring: false,
+  armed: false,
   lastBump: null,
 };
+
+function detectorConfig(): DetectorConfig {
+  const { sensitivity, detectOnlyWhenMoving } = getState().settings;
+  return { ...SENSITIVITY_PRESETS[sensitivity], requireMotion: detectOnlyWhenMoving };
+}
 
 let snap: RideSnapshot = IDLE;
 const listeners = new Set<() => void>();
@@ -154,10 +172,11 @@ export const rideSession = {
       const { settings, contacts } = getState();
       await RideMonitor.start({
         rideId,
-        detector: SENSITIVITY_PRESETS[settings.sensitivity],
+        detector: detectorConfig(),
         countdownSeconds: settings.countdownSeconds,
         contactPhones: contacts.map((c) => c.phone),
         alertTemplate: buildAlertTemplate(),
+        testAlertTemplate: buildAlertTemplate({ test: true }),
         autoSms: true,
       });
       update({ ...IDLE, active: true, rideId, startTime: Date.now(), monitoring: true });
@@ -282,6 +301,7 @@ function applyNativeSnapshot(s: NativeSnapshot, points: RoutePoint[]) {
     gpsAccuracy: s.gpsAccuracy,
     liveG: s.liveG,
     monitoring: true,
+    armed: s.armed,
     lastBump: s.lastBump,
   });
 }
@@ -310,8 +330,8 @@ if (RideMonitor) {
     if (s.pointCount > points.length + 1) applyNativeSnapshot(s, native.getRoute());
     else applyNativeSnapshot(s, points);
   });
-  native.addListener('onLiveG', ({ g }) => {
-    if (snap.active) update({ liveG: g });
+  native.addListener('onLiveG', ({ g, armed }) => {
+    if (snap.active) update({ liveG: g, armed });
   });
   native.addListener('onBump', (b) => update({ lastBump: b }));
   native.addListener('onCrash', (c) =>
@@ -362,7 +382,7 @@ const jsEngine = (() => {
 
   function onDetectorEvent(event: DetectorEvent) {
     if (event.type === 'bump') {
-      update({ lastBump: { at: event.impactAt, peakG: event.peakG } });
+      update({ lastBump: { at: event.impactAt, peakG: event.peakG, reason: event.reason } });
       return;
     }
     suspended = true;
@@ -382,6 +402,7 @@ const jsEngine = (() => {
     const t = loc.timestamp;
     const point: RoutePoint = { lat, lng, t, speed: speed != null && speed >= 0 ? speed : null };
     const prev = snap.points[snap.points.length - 1];
+    detector.pushSpeed(Date.now(), point.speed);
 
     let added = 0;
     if (prev && (accuracy ?? 0) <= MAX_GOOD_ACCURACY_M) added = distanceM(prev, point);
@@ -418,7 +439,7 @@ const jsEngine = (() => {
         { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 2000, distanceInterval: 5 },
         onLocation,
       );
-      detector.setConfig(SENSITIVITY_PRESETS[getState().settings.sensitivity]);
+      detector.setConfig(detectorConfig());
       detector.reset();
       suspended = false;
       Accelerometer.setUpdateInterval(SENSOR_INTERVAL_MS);
@@ -428,7 +449,7 @@ const jsEngine = (() => {
         const g = Math.sqrt(x * x + y * y + z * z);
         if (t - lastGEmit > 250) {
           lastGEmit = t;
-          update({ liveG: g });
+          update({ liveG: g, armed: detector.isArmed(t) });
         }
         if (suspended) return;
         const event = detector.pushAccel({ t, x, y, z });

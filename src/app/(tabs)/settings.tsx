@@ -94,9 +94,16 @@ export default function SettingsScreen() {
           ]}
         />
         <T.Dim>{SENSITIVITY_HELP[settings.sensitivity]}</T.Dim>
+        <ToggleRow
+          title="Only detect while riding"
+          body="Crash detection turns on once GPS shows you moving (above ~11 km/h). Stops false alarms from handling the phone. Turn off only to test detection at a standstill."
+          value={settings.detectOnlyWhenMoving}
+          onChange={(detectOnlyWhenMoving) => actions.updateSettings({ detectOnlyWhenMoving })}
+        />
         <T.Dim style={{ fontSize: 12 }}>
-          Triggers on an impact of at least {preset.impactG} g, then {preset.stillMs / 1000}s of stillness and a{' '}
-          {preset.orientationDeg}° change in orientation. Takes effect on your next ride.
+          Triggers on an impact of at least {preset.impactG} g (not after a burst of shaking), then{' '}
+          {preset.stillMs / 1000}s of stillness and a {preset.orientationDeg}° change in orientation. Takes effect
+          on your next ride.
         </T.Dim>
       </Card>
       <Card>

@@ -28,6 +28,8 @@ export type Settings = {
   liveLocation: boolean;
   includeMedicalInfo: boolean;
   emergencyNumber: string;
+  /** Only detect crashes after GPS shows the rider moving (prevents false alarms from handling the phone). */
+  detectOnlyWhenMoving: boolean;
 };
 
 export type RoutePoint = LatLng & { t: number; speed: number | null };

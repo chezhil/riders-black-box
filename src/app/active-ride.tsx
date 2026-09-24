@@ -37,10 +37,19 @@ export default function ActiveRide() {
   return (
     <Screen edges={['top', 'bottom', 'left', 'right']}>
       <Row style={{ justifyContent: 'space-between' }}>
-        <Row>
-          <View style={[styles.dot, { backgroundColor: ride.monitoring ? Colors.ok : Colors.textFaint }]} />
-          <T.Body style={{ fontWeight: '700' }}>
-            {ride.monitoring ? 'Crash detection active' : 'Starting sensors…'}
+        <Row style={{ flex: 1 }}>
+          <View
+            style={[
+              styles.dot,
+              { backgroundColor: !ride.monitoring ? Colors.textFaint : ride.armed ? Colors.ok : Colors.accent },
+            ]}
+          />
+          <T.Body style={{ fontWeight: '700', flex: 1 }}>
+            {!ride.monitoring
+              ? 'Starting sensors…'
+              : ride.armed
+                ? 'Crash detection active'
+                : "Crash detection turns on once you're moving"}
           </T.Body>
         </Row>
         <T.Dim>{ride.liveG.toFixed(1)} g</T.Dim>
@@ -50,7 +59,7 @@ export default function ActiveRide() {
         <Row style={styles.bump}>
           <Ionicons name="pulse" size={16} color={Colors.accent} />
           <T.Dim style={{ flex: 1 }}>
-            Bump detected ({ride.lastBump!.peakG} g). You kept moving, so no alert.
+            Jolt detected ({ride.lastBump!.peakG} g), no alert: {BUMP_REASONS[ride.lastBump!.reason]}
           </T.Dim>
         </Row>
       )}
@@ -105,6 +114,13 @@ export default function ActiveRide() {
     </Screen>
   );
 }
+
+const BUMP_REASONS = {
+  moving_again: 'you kept moving.',
+  not_moving: "you weren't riding.",
+  handling: 'looked like the phone was being handled.',
+  no_fall: 'no sign of a fall.',
+} as const;
 
 const styles = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 5 },

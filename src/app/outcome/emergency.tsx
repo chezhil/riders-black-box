@@ -2,12 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Button, Card, Disclaimer, Row, Screen, T } from '@/components/ui';
+import { Button, Card, Disclaimer, Row, Screen, T, TestBanner } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
 import { notifyContacts, relayConfigured, startLocationFollowUps, type NotifyResult } from '@/lib/alerts';
-import { finishIncident } from '@/lib/flow';
+import { finishIncident, useIsTestReport } from '@/lib/flow';
 import { mapsLink } from '@/lib/geo';
 import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { actions, useApp } from '@/lib/store';
@@ -22,6 +22,18 @@ export default function Emergency() {
   const [address, setAddress] = useState<string | null>(null);
   const [notify, setNotify] = useState<NotifyResult | 'sending' | null>(null);
   const sent = useRef(false);
+  const isTest = useIsTestReport(reportId);
+
+  function callEmergency() {
+    if (isTest) {
+      Alert.alert(
+        'Test: not calling ' + emergencyNumber,
+        `This is a simulated crash, so emergency services aren't called. In a real emergency this button calls ${emergencyNumber} immediately.`,
+      );
+      return;
+    }
+    Linking.openURL(`tel:${emergencyNumber}`);
+  }
 
   useEffect(() => {
     (async () => {
@@ -46,10 +58,10 @@ export default function Emergency() {
 
   async function sendAlert(loc: LatLng | null) {
     setNotify('sending');
-    const result = await notifyContacts('severe', loc);
+    const result = await notifyContacts('severe', loc, { test: isTest });
     setNotify(result);
     if (reportId && result.delivered) actions.updateReport(reportId, { contactsNotified: true });
-    startLocationFollowUps(() => rideSession.currentLocation());
+    if (!isTest) startLocationFollowUps(() => rideSession.currentLocation());
   }
 
   // Severe: alert contacts automatically, once location is known (or after a short wait).
@@ -74,7 +86,7 @@ export default function Emergency() {
       : notify == null
         ? 'Getting your location…'
         : notify.channel === 'relay' || notify.channel === 'sim'
-          ? `SEVERE alert texted to ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
+          ? `${isTest ? 'TEST ' : ''}SEVERE alert texted to ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
           : notify.channel === 'sms_composer'
             ? 'SEVERE alert opened in your SMS app. Make sure it was sent.'
             : `Contacts not alerted: ${notify.error}`;
@@ -86,15 +98,20 @@ export default function Emergency() {
         <T.Label style={{ color: Colors.danger }}>Emergency</T.Label>
         <T.Title style={{ textAlign: 'center' }}>Call for help now</T.Title>
       </View>
+      {isTest && <TestBanner />}
 
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Call emergency services ${emergencyNumber}`}
-        onPress={() => Linking.openURL(`tel:${emergencyNumber}`)}
-        style={({ pressed }) => [styles.callButton, pressed && { transform: [{ scale: 0.97 }] }]}>
+        onPress={callEmergency}
+        style={({ pressed }) => [
+          styles.callButton,
+          isTest && { opacity: 0.6 },
+          pressed && { transform: [{ scale: 0.97 }] },
+        ]}>
         <Ionicons name="call" size={64} color="#FFFFFF" />
         <Text style={styles.callText}>Call {emergencyNumber}</Text>
-        <Text style={styles.callSub}>Emergency services</Text>
+        <Text style={styles.callSub}>{isTest ? 'Disabled in test' : 'Emergency services'}</Text>
       </Pressable>
 
       <Card>

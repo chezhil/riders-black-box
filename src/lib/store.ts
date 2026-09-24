@@ -45,6 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   liveLocation: true,
   includeMedicalInfo: true,
   emergencyNumber: '112',
+  detectOnlyWhenMoving: true,
 };
 
 const DEFAULTS: AppData = {

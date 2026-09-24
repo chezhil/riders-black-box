@@ -47,6 +47,8 @@ data class RideConfig(
   val contactPhones: List<String>,
   /** Alert text with {LINK} and {TIME} placeholders, rendered by the JS app. */
   val alertTemplate: String,
+  /** Same, clearly marked as a test; used for simulated crashes. */
+  val testAlertTemplate: String,
   val autoSms: Boolean,
 )
 
@@ -62,7 +64,10 @@ data class CrashState(
   var status: String = "countdown",
   var smsSent: Int = 0,
   var smsError: String? = null,
-)
+) {
+  /** Simulated crash: a drill that only texts emergency contacts, clearly marked as a test. */
+  val isTest get() = via == "simulated"
+}
 
 /**
  * Process-wide state shared by the service, the Expo module, the lock-screen
@@ -115,6 +120,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
   var gpsAccuracy: Float? = null
   var liveG = 1.0
   var lastBump: Pair<Long, Double>? = null
+  var lastBumpReason: String? = null
   var detectionSuspended = false
   var crash: CrashState? = null
 
@@ -199,14 +205,15 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
         liveG = Math.sqrt(x * x + y * y + z * z)
         if (t - lastGEmit > 500 && RideMonitor.appInForeground) {
           lastGEmit = t
-          RideMonitor.emit("onLiveG", mapOf("g" to liveG))
+          RideMonitor.emit("onLiveG", mapOf("g" to liveG, "armed" to detector.isArmed(t)))
         }
         if (detectionSuspended) return
         when (val e = detector.pushAccel(t, x, y, z)) {
           is DetectorEvent.Crash -> triggerCrash(e.peakG, "sensor")
           is DetectorEvent.Bump -> {
             lastBump = e.impactAt to e.peakG
-            RideMonitor.emit("onBump", mapOf("at" to e.impactAt.toDouble(), "peakG" to e.peakG))
+            lastBumpReason = e.reason
+            RideMonitor.emit("onBump", mapOf("at" to e.impactAt.toDouble(), "peakG" to e.peakG, "reason" to e.reason))
           }
           null -> {}
         }
@@ -228,6 +235,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     ) return
 
     val speed = if (loc.hasSpeed()) loc.speed.toDouble() else null
+    if (::detector.isInitialized) detector.pushSpeed(System.currentTimeMillis(), speed)
     val p = RoutePoint(loc.latitude, loc.longitude, loc.time, speed, if (loc.hasAccuracy()) loc.accuracy else null)
     val prev = points.lastOrNull()
     if (prev != null && (p.accuracy ?: 0f) <= MAX_GOOD_ACCURACY_M) {
@@ -270,10 +278,11 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       "maxSpeed" to maxSpeed,
       "gpsAccuracy" to gpsAccuracy?.toDouble(),
       "liveG" to liveG,
+      "armed" to detector.isArmed(System.currentTimeMillis()),
       "pointCount" to points.size,
       "lastPoint" to last?.let { pointMap(it) },
       "hardBrakes" to hardBrakes.map { mapOf("lat" to it.lat, "lng" to it.lng, "t" to it.t.toDouble(), "decel" to it.decel) },
-      "lastBump" to lastBump?.let { mapOf("at" to it.first.toDouble(), "peakG" to it.second) },
+      "lastBump" to lastBump?.let { mapOf("at" to it.first.toDouble(), "peakG" to it.second, "reason" to lastBumpReason) },
       "crash" to crash?.let { crashMap(it) },
     )
   }
@@ -364,7 +373,8 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       "(location unavailable)"
     }
     val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(c.startedAt))
-    val body = config.alertTemplate.replace("{LINK}", link).replace("{TIME}", time)
+    val template = if (c.isTest) config.testAlertTemplate else config.alertTemplate
+    val body = template.replace("{LINK}", link).replace("{TIME}", time)
     val result = SmsSender.send(this, config.contactPhones, body)
     c.smsSent = result.first
     c.smsError = result.second
@@ -440,7 +450,14 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       .setContentIntent(openAppIntent())
       .build()
 
+  /** The app went to the background mid-countdown: now the rider needs the notification / lock-screen alert. */
+  fun onAppBackgrounded() {
+    crash?.takeIf { it.status == "countdown" }?.let { postCrashNotification(it) }
+  }
+
   private fun postCrashNotification(c: CrashState) {
+    // While our own app is on screen, its "Are you OK?" screen is the alert; no heads-up on top of it.
+    if (RideMonitor.appInForeground) return
     val alertActivity = Intent(this, CrashAlertActivity::class.java).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
     }
@@ -453,8 +470,11 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
 
     val builder = NotificationCompat.Builder(this, CRASH_CHANNEL)
       .setSmallIcon(android.R.drawable.stat_sys_warning)
-      .setContentTitle("Are you OK? Possible crash detected")
-      .setContentText("Contacts will be alerted with your location unless you respond.")
+      .setContentTitle(if (c.isTest) "TEST: Are you OK? (simulated crash)" else "Are you OK? Possible crash detected")
+      .setContentText(
+        if (c.isTest) "Test: if you don't respond, only your emergency contacts get a test text."
+        else "Contacts will be alerted with your location unless you respond.",
+      )
       .setPriority(NotificationCompat.PRIORITY_MAX)
       .setCategory(NotificationCompat.CATEGORY_ALARM)
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -465,25 +485,25 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       .setWhen(c.deadline)
       .setShowWhen(true)
       .setTimeoutAfter(config.countdownSeconds * 1000L + 2000)
-      .setContentIntent(if (RideMonitor.appInForeground) openAppIntent() else alertPending)
+      .setContentIntent(alertPending)
       .addAction(0, "I'M FINE", finePending)
       .addAction(0, "I NEED HELP", alertPending)
-    // Full-screen over the lock screen / heads-up over Google Maps. When our own
-    // app is on screen the JS "Are you OK?" screen handles it instead.
-    if (!RideMonitor.appInForeground) builder.setFullScreenIntent(alertPending, true)
+    // Full-screen over the lock screen; heads-up over Google Maps.
+    builder.setFullScreenIntent(alertPending, true)
     val n = builder.build().apply { flags = flags or Notification.FLAG_INSISTENT }
     notifySafely(CRASH_NOTIFICATION_ID, n)
   }
 
   private fun postAlertedNotification(c: CrashState) {
     val text = when {
+      c.smsSent > 0 && c.isTest -> "Test alert texted to ${c.smsSent} emergency contact${if (c.smsSent > 1) "s" else ""}. Tap to continue the test."
       c.smsSent > 0 -> "Your location was texted to ${c.smsSent} emergency contact${if (c.smsSent > 1) "s" else ""}. Tap to get help."
       c.smsError != null -> "Couldn't text contacts: ${c.smsError}. Tap to get help."
       else -> "Tap to get help."
     }
     val n = NotificationCompat.Builder(this, CRASH_CHANNEL)
       .setSmallIcon(android.R.drawable.stat_sys_warning)
-      .setContentTitle("No response: emergency alert sent")
+      .setContentTitle(if (c.isTest) "TEST: no response, test alert sent" else "No response: emergency alert sent")
       .setContentText(text)
       .setStyle(NotificationCompat.BigTextStyle().bigText(text))
       .setPriority(NotificationCompat.PRIORITY_HIGH)

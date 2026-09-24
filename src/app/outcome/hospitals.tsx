@@ -3,10 +3,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, View } from 'react-native';
 
-import { Badge, Button, Card, Disclaimer, Row, Screen, T } from '@/components/ui';
+import { Badge, Button, Card, Disclaimer, Row, Screen, T, TestBanner } from '@/components/ui';
 import { Colors, SeverityColors, Spacing } from '@/constants/theme';
 import { notifyContacts } from '@/lib/alerts';
-import { finishIncident } from '@/lib/flow';
+import { finishIncident, useIsTestReport } from '@/lib/flow';
 import { directionsLink, formatDistance } from '@/lib/geo';
 import { findNearbyFacilities, type Facility } from '@/lib/hospitals';
 import { highestSeverity } from '@/lib/injury';
@@ -25,6 +25,7 @@ export default function Hospitals() {
   const emergencyNumber = useApp((s) => s.settings.emergencyNumber);
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [notifying, setNotifying] = useState(false);
+  const isTest = useIsTestReport(reportId);
 
   const reportLocation = report?.location ?? null;
 
@@ -40,10 +41,20 @@ export default function Hospitals() {
   async function notify() {
     if (!report) return;
     setNotifying(true);
-    const result = await notifyContacts(highestSeverity(report.affectedAreas), report.location);
+    const result = await notifyContacts(highestSeverity(report.affectedAreas), report.location, {
+      test: isTest,
+    });
     setNotifying(false);
     if (result.delivered) actions.updateReport(report.id, { contactsNotified: true });
     else if (result.error) Alert.alert("Couldn't notify contacts", result.error);
+  }
+
+  function callFacility(phone: string) {
+    if (isTest) {
+      Alert.alert('Test: not calling', "This is a simulated crash, so hospitals aren't called.");
+      return;
+    }
+    Linking.openURL(`tel:${phone.split(/[;,]/)[0].replace(/\s/g, '')}`);
   }
 
   function openMapsSearch() {
@@ -65,6 +76,7 @@ export default function Hospitals() {
         </View>
       </Row>
 
+      {isTest && <TestBanner />}
       <Row>
         <Button
           label={report?.contactsNotified ? 'Contacts notified' : 'Notify contacts'}
@@ -130,7 +142,7 @@ export default function Hospitals() {
                 variant="secondary"
                 style={{ flex: 1 }}
                 disabled={!f.phone}
-                onPress={() => f.phone && Linking.openURL(`tel:${f.phone.split(/[;,]/)[0].replace(/\s/g, '')}`)}
+                onPress={() => f.phone && callFacility(f.phone)}
               />
             </Row>
           </Card>
