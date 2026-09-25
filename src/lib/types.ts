@@ -67,6 +67,8 @@ export type CrashEvent = {
   response: CrashResponse;
   contactsNotified: boolean;
   notifyChannel: NotifyChannel;
+  /** "I'm OK" follow-up already texted to contacts. */
+  allClearSent?: boolean;
 };
 
 export type Severity = 'minor' | 'moderate' | 'severe';
@@ -106,6 +108,8 @@ export type InjuryReport = {
   outcomePath: OutcomePath;
   handled: boolean;
   contactsNotified: boolean;
+  /** "I'm OK" follow-up already texted to contacts. */
+  allClearSent?: boolean;
   /** Came from a simulated (demo) crash: never call 112 or hospitals. */
   test?: boolean;
 };

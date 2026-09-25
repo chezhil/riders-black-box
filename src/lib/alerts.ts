@@ -66,6 +66,27 @@ function renderAlert(severity: AlertSeverity, where: string, time: string) {
   return msg;
 }
 
+/** How the incident ended, for the "I'm OK" follow-up text. */
+export type AllClearKind = 'not_hurt' | 'handled' | 'help_arrived';
+
+export function buildAllClearMessage(kind: AllClearKind) {
+  const name = getState().profile.name.trim() || 'Your contact';
+  const time = formatTime(Date.now());
+  switch (kind) {
+    case 'not_hurt':
+      return `✅ Update from ${name}: I'm OK, not hurt. The crash alert can be ignored. (${time})`;
+    case 'handled':
+      return `✅ Update from ${name}: I'm OK now and things are taken care of. No need to worry. (${time})`;
+    case 'help_arrived':
+      return `✅ Update: help has reached ${name}. (${time})`;
+  }
+}
+
+/** Tell contacts who were alerted that it's over. */
+export function sendAllClear(kind: AllClearKind) {
+  return sendToContacts(buildAllClearMessage(kind));
+}
+
 export type NotifyResult = {
   channel: NotifyChannel;
   delivered: boolean;

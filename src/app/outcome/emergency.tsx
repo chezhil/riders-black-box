@@ -173,7 +173,7 @@ export default function Emergency() {
         variant="secondary"
         onPress={() => router.push({ pathname: '/outcome/hospitals', params: { reportId: reportId ?? '' } })}
       />
-      <Button label="Help has arrived / I'm safe" variant="ghost" onPress={() => finishIncident(reportId)} />
+      <Button label="Help has arrived / I'm safe" variant="ghost" onPress={() => finishIncident(reportId, 'help_arrived')} />
       <Disclaimer>
         While you wait: stay still if your neck or back hurts, and keep your helmet on. Press firmly on heavy
         bleeding with a clean cloth.

@@ -7,7 +7,7 @@ import { BodyMap, type BodyView } from '@/components/body-map';
 import { Button, Card, Disclaimer, Field, Row, Screen, Segmented, T, TestBanner } from '@/components/ui';
 import { Colors, Radius, SeverityColors, Spacing } from '@/constants/theme';
 import { relayConfigured } from '@/lib/alerts';
-import { callEmergencyNumber, useIsTestCrash } from '@/lib/flow';
+import { callEmergencyNumber, endIncident, useIsTestCrash } from '@/lib/flow';
 import { BODY_PART_LABELS, SEVERITY_INFO, highestSeverity, outcomeFor } from '@/lib/injury';
 import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { actions, getState, newId, useApp } from '@/lib/store';
@@ -40,7 +40,7 @@ export default function CheckIn() {
 
   function notHurt() {
     if (crashId) actions.updateCrash(crashId, { response: 'confirmed_fine' });
-    rideSession.endEmergency();
+    endIncident({ crashId }, 'not_hurt');
     rideSession.resumeDetection();
     router.dismissTo(rideSession.getSnapshot().active ? '/active-ride' : '/');
   }
