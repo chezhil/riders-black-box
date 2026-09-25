@@ -48,6 +48,18 @@ data class RideConfig(
   /** Alert text with {LINK} and {TIME} placeholders, rendered by the JS app. */
   val alertTemplate: String,
   val autoSms: Boolean,
+  /** Shown to bystanders on the lock screen after no response. */
+  val riderName: String,
+  val medicalSummary: String,
+  /** Same order as [contactPhones]. */
+  val contactNames: List<String>,
+  /** Phone the contacts (speakerphone) after the alert SMS. */
+  val autoCall: Boolean,
+  /** Loud siren + bystander screen after no response. */
+  val siren: Boolean,
+  val emergencyNumber: String,
+  /** Text updated locations every few minutes after the alert. */
+  val followUps: Boolean,
 )
 
 data class CrashState(
@@ -95,6 +107,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     private const val CRASH_CHANNEL = "crash_alert_v1"
     private const val RIDE_NOTIFICATION_ID = 4101
     const val CRASH_NOTIFICATION_ID = 4102
+    private const val ALERTED_NOTIFICATION_ID = 4103
     private const val HARD_BRAKE_MPS2 = 3.5
     private const val HARD_BRAKE_MIN_SPEED = 5.0
     private const val MAX_GOOD_ACCURACY_M = 30f
@@ -121,6 +134,9 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
   var lastBumpReason: String? = null
   var detectionSuspended = false
   var crash: CrashState? = null
+  /** Active after an unanswered crash: SMS/retries, follow-ups, calls, siren. */
+  var responder: EmergencyResponder? = null
+    private set
 
   private var lastUpdateEmit = 0L
   private var lastGEmit = 0L
@@ -186,6 +202,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     runCatching { locationManager.removeUpdates(this) }
     main.removeCallbacks(countdownRunnable)
     stopAlarm()
+    responder?.stop()
     wakeLock?.let { if (it.isHeld) it.release() }
     if (RideMonitor.service === this) RideMonitor.service = null
     super.onDestroy()
@@ -349,32 +366,50 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     if (c.status != "countdown") return
     stopAlarm()
     c.status = "alerted"
-    if (config.autoSms && !c.isTest) sendAlertSms(c)
-    postAlertedNotification(c)
+    if (config.autoSms) {
+      val r = EmergencyResponder(this, config, main) { points.lastOrNull()?.let { it.lat to it.lng } }
+      responder = r
+      val (sent, error) = r.begin(c)
+      c.smsSent = sent
+      c.smsError = error
+    }
+    showBystanderScreen(c)
     RideMonitor.emit("onCrashResolved", crashMap(c))
   }
 
-  private fun sendAlertSms(c: CrashState) {
-    if (config.contactPhones.isEmpty()) {
-      c.smsError = "No emergency contacts"
-      return
+  /** Rider (or JS "help has arrived") ended the emergency: stop siren, calls, texts. */
+  fun stopEmergency() {
+    responder?.stop()
+    responder = null
+    notificationManager().cancel(CRASH_NOTIFICATION_ID)
+    notificationManager().cancel(ALERTED_NOTIFICATION_ID)
+  }
+
+  fun emergencyMap(): Map<String, Any?> {
+    val r = responder
+    return mapOf(
+      "active" to (r?.active == true),
+      "sirenOn" to (r?.sirenOn == true),
+      "callingName" to r?.callingName,
+      "callsFinished" to (r?.callsFinished == true),
+      "pendingRetries" to (r?.pendingRetries ?: 0),
+    )
+  }
+
+  /**
+   * After no response the lock-screen activity switches to the bystander view
+   * (who the rider is, medical info, call buttons). Launch it directly if our
+   * app is on screen, otherwise via a full-screen notification.
+   */
+  private fun showBystanderScreen(c: CrashState) {
+    postAlertedNotification(c)
+    if (RideMonitor.appInForeground) {
+      runCatching {
+        startActivity(
+          Intent(this, CrashAlertActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        )
+      }
     }
-    if (!hasPermission(Manifest.permission.SEND_SMS)) {
-      c.smsError = "SMS permission not granted"
-      return
-    }
-    val lat = c.lat ?: points.lastOrNull()?.lat
-    val lng = c.lng ?: points.lastOrNull()?.lng
-    val link = if (lat != null && lng != null) {
-      "https://www.google.com/maps/search/?api=1&query=%.6f,%.6f".format(Locale.US, lat, lng)
-    } else {
-      "(location unavailable)"
-    }
-    val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(c.startedAt))
-    val body = config.alertTemplate.replace("{LINK}", link).replace("{TIME}", time)
-    val result = SmsSender.send(this, config.contactPhones, body)
-    c.smsSent = result.first
-    c.smsError = result.second
   }
 
   // ---- Alarm + notifications ----------------------------------------------
@@ -492,25 +527,35 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
   }
 
   private fun postAlertedNotification(c: CrashState) {
+    val calling = config.autoCall && !c.isTest
     val text = when {
-      c.isTest -> "Test countdown ended. In a real crash your emergency contacts would now be texted your location. Tap to continue."
-      c.smsSent > 0 -> "Your location was texted to ${c.smsSent} emergency contact${if (c.smsSent > 1) "s" else ""}. Tap to get help."
-      c.smsError != null -> "Couldn't text contacts: ${c.smsError}. Tap to get help."
-      else -> "Tap to get help."
+      c.isTest -> "Test countdown ended. In a real crash your emergency contacts would now be texted and called. Tap for the bystander screen."
+      c.smsSent > 0 -> "Location texted to ${c.smsSent} emergency contact${if (c.smsSent > 1) "s" else ""}${if (calling) "; calling them now" else ""}. Tap for rider info."
+      c.smsError != null -> "Couldn't text contacts: ${c.smsError}. Tap for rider info."
+      else -> "Tap for rider info."
     }
+    val bystander = PendingIntent.getActivity(
+      this, 4,
+      Intent(this, CrashAlertActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+      immutable(PendingIntent.FLAG_UPDATE_CURRENT),
+    )
     val n = NotificationCompat.Builder(this, CRASH_CHANNEL)
       .setSmallIcon(android.R.drawable.stat_sys_warning)
-      .setContentTitle(if (c.isTest) "TEST: no response (nothing sent)" else "No response: emergency alert sent")
+      .setContentTitle(if (c.isTest) "TEST: no response (nothing sent)" else "Rider may be injured: emergency alert sent")
       .setContentText(text)
       .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      .setPriority(NotificationCompat.PRIORITY_MAX)
       .setCategory(NotificationCompat.CATEGORY_ALARM)
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setSilent(true)
-      .setAutoCancel(true)
-      .setContentIntent(openAppIntent())
+      .setOngoing(!c.isTest)
+      .setContentIntent(bystander)
+      .setFullScreenIntent(bystander, true)
       .build()
-    notifySafely(CRASH_NOTIFICATION_ID, n)
+    // Cancel (not replace) the countdown notification: its insistent alarm sound
+    // otherwise keeps looping in System UI.
+    notificationManager().cancel(CRASH_NOTIFICATION_ID)
+    notifySafely(ALERTED_NOTIFICATION_ID, n)
   }
 
   private fun notifySafely(id: Int, n: Notification) {

@@ -46,6 +46,8 @@ export const DEFAULT_SETTINGS: Settings = {
   includeMedicalInfo: true,
   emergencyNumber: '112',
   detectOnlyWhenMoving: true,
+  autoCallContacts: true,
+  sirenOnNoResponse: true,
 };
 
 const DEFAULTS: AppData = {

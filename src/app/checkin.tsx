@@ -40,6 +40,7 @@ export default function CheckIn() {
 
   function notHurt() {
     if (crashId) actions.updateCrash(crashId, { response: 'confirmed_fine' });
+    rideSession.endEmergency();
     rideSession.resumeDetection();
     router.dismissTo(rideSession.getSnapshot().active ? '/active-ride' : '/');
   }
@@ -99,6 +100,9 @@ export default function CheckIn() {
             </T.Body>
           </Row>
           <T.Dim>If you can, tell us where you&apos;re hurt so we can point you to the right help.</T.Dim>
+          {backgroundCapable && (
+            <Button label="Stop siren" icon="volume-mute" variant="secondary" onPress={() => rideSession.stopSiren()} />
+          )}
         </Card>
       )}
 

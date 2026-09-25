@@ -62,6 +62,26 @@ export type StartOptions = {
   /** Alert SMS with {LINK} and {TIME} placeholders. */
   alertTemplate: string;
   autoSms: boolean;
+  /** Shown to bystanders on the lock screen after no response. */
+  riderName: string;
+  medicalSummary: string;
+  /** Same order as contactPhones. */
+  contactNames: string[];
+  /** Phone the contacts on speakerphone after the alert SMS. */
+  autoCall: boolean;
+  /** Loud siren + bystander screen after no response. */
+  siren: boolean;
+  emergencyNumber: string;
+  /** Text updated locations every 3 minutes for 15 minutes after the alert. */
+  followUps: boolean;
+};
+
+export type NativeEmergency = {
+  active: boolean;
+  sirenOn: boolean;
+  callingName: string | null;
+  callsFinished: boolean;
+  pendingRetries: number;
 };
 
 type Events = {
@@ -82,6 +102,9 @@ type RideMonitorNative = {
   simulateCrash(): void;
   resolveCrash(outcome: 'fine' | 'help'): void;
   resumeDetection(): void;
+  stopEmergency(): void;
+  stopSiren(): void;
+  getEmergency(): NativeEmergency | null;
   sendSms(phones: string[], body: string): Promise<{ sent: number; error: string | null }>;
   getSystemStatus(): {
     notificationsEnabled: boolean;

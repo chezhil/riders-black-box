@@ -33,6 +33,13 @@ class StartOptions : Record {
   @Field val contactPhones: List<String> = emptyList()
   @Field val alertTemplate: String = ""
   @Field val autoSms: Boolean = true
+  @Field val riderName: String = ""
+  @Field val medicalSummary: String = ""
+  @Field val contactNames: List<String> = emptyList()
+  @Field val autoCall: Boolean = true
+  @Field val siren: Boolean = true
+  @Field val emergencyNumber: String = "112"
+  @Field val followUps: Boolean = true
 }
 
 class RideMonitorModule : Module() {
@@ -71,6 +78,13 @@ class RideMonitorModule : Module() {
         contactPhones = options.contactPhones,
         alertTemplate = options.alertTemplate,
         autoSms = options.autoSms,
+        riderName = options.riderName,
+        medicalSummary = options.medicalSummary,
+        contactNames = options.contactNames,
+        autoCall = options.autoCall,
+        siren = options.siren,
+        emergencyNumber = options.emergencyNumber,
+        followUps = options.followUps,
       )
       val intent = Intent(context, RideMonitorService::class.java).setAction(RideMonitorService.ACTION_START)
       ContextCompat.startForegroundService(context, intent)
@@ -100,6 +114,13 @@ class RideMonitorModule : Module() {
     Function("resolveCrash") { outcome: String -> RideMonitor.service?.resolveCrash(outcome) }
 
     Function("resumeDetection") { RideMonitor.service?.resumeDetection() }
+
+    /** Help has arrived / rider is OK: stop the siren, auto-calls and follow-up texts. */
+    Function("stopEmergency") { RideMonitor.service?.stopEmergency() }
+
+    Function("stopSiren") { RideMonitor.service?.responder?.stopSiren() }
+
+    Function<Map<String, Any?>?>("getEmergency") { RideMonitor.service?.emergencyMap() }
 
     AsyncFunction("sendSms") { phones: List<String>, body: String ->
       val (sent, error) = SmsSender.send(context, phones, body)

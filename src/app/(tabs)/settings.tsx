@@ -28,6 +28,7 @@ type BackgroundStatus = {
   fullScreen: boolean;
   battery: boolean;
   simSms: boolean;
+  calls: boolean;
 };
 
 export default function SettingsScreen() {
@@ -50,6 +51,9 @@ export default function SettingsScreen() {
           fullScreen: status.fullScreenIntentAllowed,
           battery: status.ignoringBatteryOptimizations,
           simSms: await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.SEND_SMS),
+          calls:
+            (await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CALL_PHONE)) &&
+            (await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE)),
         });
       }
     })();
@@ -123,9 +127,21 @@ export default function SettingsScreen() {
       <Card>
         <ToggleRow
           title="Live location follow-ups"
-          body="After an alert, text contacts your updated location every 2 minutes (up to 10 min). Sent automatically from your SIM or the SMS relay."
+          body="After an alert, text contacts your updated location every 3 minutes (for 15 min). Sent automatically from your SIM."
           value={settings.liveLocation}
           onChange={(liveLocation) => actions.updateSettings({ liveLocation })}
+        />
+        <ToggleRow
+          title="Call my contacts if I don't respond"
+          body="After the alert text, phones your emergency contacts one by one on speakerphone, so someone can hear what's happening."
+          value={settings.autoCallContacts}
+          onChange={(autoCallContacts) => actions.updateSettings({ autoCallContacts })}
+        />
+        <ToggleRow
+          title="Siren + info for bystanders"
+          body="After no response, sounds a loud siren and shows your name, medical info and call buttons on the lock screen for whoever finds you."
+          value={settings.sirenOnNoResponse}
+          onChange={(sirenOnNoResponse) => actions.updateSettings({ sirenOnNoResponse })}
         />
         <ToggleRow
           title="Include medical info"
@@ -183,6 +199,26 @@ export default function SettingsScreen() {
               ok={bg?.simSms}
               onFix={() => rideSession.requestPermissions().then(refresh)}
             />
+            <FixRow
+              label="Auto-call contacts"
+              ok={bg?.calls}
+              onFix={() => rideSession.requestPermissions().then(refresh)}
+            />
+          </Card>
+        </>
+      )}
+
+      {Platform.OS === 'android' && (
+        <>
+          <T.Label>Backup: Android Emergency SOS</T.Label>
+          <Card>
+            <T.Dim>
+              Android has its own SOS that works even if this app can&apos;t: press the power button 5 times to call{' '}
+              {settings.emergencyNumber} and share your location. Also add your medical info and contacts to Android&apos;s
+              emergency information so they show on the lock screen.
+            </T.Dim>
+            <T.Dim style={{ fontSize: 12 }}>Settings → Safety &amp; emergency → Emergency SOS / Medical information</T.Dim>
+            <Button label="Open Safety & emergency settings" icon="shield-checkmark" variant="secondary" onPress={openSafetySettings} />
           </Card>
         </>
       )}
@@ -272,4 +308,16 @@ function FixRow({ label, ok, onFix }: { label: string; ok: boolean | undefined; 
       {ok === false && <Button label="Fix" variant="secondary" onPress={onFix} style={{ minHeight: 36 }} />}
     </Row>
   );
+}
+
+/** Android's "Safety & emergency" page (Emergency SOS, medical info). Falls back to main Settings. */
+async function openSafetySettings() {
+  for (const action of ['android.settings.EMERGENCY_SETTINGS', 'android.settings.SETTINGS']) {
+    try {
+      await Linking.sendIntent(action);
+      return;
+    } catch {
+      // Not available on this device: try the next one.
+    }
+  }
 }

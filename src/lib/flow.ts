@@ -9,6 +9,7 @@ import { actions, useApp } from './store';
 export function finishIncident(reportId?: string) {
   if (reportId) actions.updateReport(reportId, { handled: true });
   stopLocationFollowUps();
+  rideSession.endEmergency();
   rideSession.resumeDetection();
   router.dismissTo(rideSession.getSnapshot().active ? '/active-ride' : '/');
 }

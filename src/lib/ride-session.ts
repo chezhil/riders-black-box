@@ -33,7 +33,7 @@ import {
 import { distanceM } from './geo';
 import { prefetchNearby } from './hospitals';
 import { actions, getState, newId } from './store';
-import type { HardBrakeEvent, LatLng, Ride, RoutePoint } from './types';
+import type { HardBrakeEvent, LatLng, MedicalInfo, Ride, RoutePoint } from './types';
 
 const SENSOR_INTERVAL_MS = 20; // 50 Hz
 const HARD_BRAKE_MPS2 = 3.5; // ~0.35 g sustained deceleration
@@ -152,7 +152,12 @@ export const rideSession = {
     let notifications = true;
     let sms = false;
     if (Platform.OS === 'android' && backgroundCapable) {
-      const wanted = [PermissionsAndroid.PERMISSIONS.SEND_SMS];
+      const wanted = [
+        PermissionsAndroid.PERMISSIONS.SEND_SMS,
+        // Auto-calling contacts after no response, and knowing when a call ends.
+        PermissionsAndroid.PERMISSIONS.CALL_PHONE,
+        PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE,
+      ];
       if (Number(Platform.Version) >= 33) wanted.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
       const res = await PermissionsAndroid.requestMultiple(wanted);
       sms = res[PermissionsAndroid.PERMISSIONS.SEND_SMS] === 'granted';
@@ -170,14 +175,21 @@ export const rideSession = {
     const rideId = newId();
 
     if (RideMonitor) {
-      const { settings, contacts } = getState();
+      const { settings, contacts, profile } = getState();
       await RideMonitor.start({
         rideId,
         detector: detectorConfig(),
         countdownSeconds: settings.countdownSeconds,
         contactPhones: contacts.map((c) => c.phone),
+        contactNames: contacts.map((c) => (c.relationship ? `${c.name} (${c.relationship})` : c.name)),
         alertTemplate: buildAlertTemplate(),
         autoSms: true,
+        riderName: profile.name,
+        medicalSummary: settings.includeMedicalInfo ? medicalSummary(profile.medical) : '',
+        autoCall: settings.autoCallContacts,
+        siren: settings.sirenOnNoResponse,
+        emergencyNumber: settings.emergencyNumber,
+        followUps: settings.liveLocation,
       });
       update({ ...IDLE, active: true, rideId, startTime: Date.now(), monitoring: true });
       return;
@@ -196,6 +208,15 @@ export const rideSession = {
   resumeDetection() {
     if (RideMonitor) RideMonitor.resumeDetection();
     else jsEngine.resume();
+  },
+
+  /** Help has arrived / rider is safe: stop the siren, auto-calls and follow-up texts. */
+  endEmergency() {
+    RideMonitor?.stopEmergency();
+  },
+
+  stopSiren() {
+    RideMonitor?.stopSiren();
   },
 
   /** Answer the native countdown ("I'm fine" / "I need help"). */
@@ -264,6 +285,16 @@ export const rideSession = {
     }
   },
 };
+
+function medicalSummary(m: MedicalInfo) {
+  return [
+    m.bloodGroup && `Blood group: ${m.bloodGroup}`,
+    m.allergies && `Allergies: ${m.allergies}`,
+    m.conditions && `Conditions: ${m.conditions}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 
 function buildRide(
   id: string,

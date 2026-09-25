@@ -28,7 +28,13 @@ In the installed Android app, a ride keeps going while you use **Google Maps as 
 
 - A **foreground service** (`modules/ride-monitor`, Kotlin) runs GPS logging, hard-brake detection and the crash detector (a Kotlin port of `src/lib/crash-detector.ts`), with a persistent "Ride in progress" notification and a partial wake lock.
 - On a crash it raises an **alarm notification** with a live countdown, an **I'M FINE** action, and a **full-screen "Are you OK?" screen over the lock screen** or over Google Maps.
-- If nobody responds, the service **texts every emergency contact from the phone's SIM** (`SEND_SMS`) with a Google Maps link to the crash location. This works while the app is in the background.
+- **If nobody responds** (rider unconscious or can't reach the phone), `EmergencyResponder` takes over, all from the background / lock screen:
+  - **texts every emergency contact from the SIM** with a Google Maps link, time and medical info; texts that fail (no signal) are **retried every minute** for 15 min
+  - **follow-up location texts** every 3 min for 15 min
+  - **phones the contacts one by one on speakerphone** (next contact if a call ends within 25 s or never connects; a second round after 2 min if nobody picked up)
+  - a **loud siren** (alarm stream, max volume, pauses during calls) and a **bystander screen over the lock screen**: rider name, medical info, one-tap Call 112 and call-contact buttons
+  - Android doesn't let ordinary apps dial 112 by themselves, so "Call 112" opens the dialer with 112 filled in
+- **Demo (simulated) crashes send nothing and call nobody**: only the bystander screen (marked TEST) and a 15 s siren.
 - Settings → **Background protection** checks notifications, lock-screen alerts, unrestricted battery (important on Motorola/Xiaomi/Samsung) and SMS permission.
 
 Expo Go and iOS fall back to the foreground-only JS engine automatically.

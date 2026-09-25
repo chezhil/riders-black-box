@@ -26,7 +26,12 @@ const PERMISSIONS = [
   {
     icon: 'chatbubbles' as const,
     title: 'SMS and calls',
-    body: 'Texts your emergency contacts from your SIM if you don\'t answer after a crash, and places emergency calls. Nothing is sent without a detected crash or your tap.',
+    body: "If you don't answer after a crash: texts your emergency contacts your location from your SIM, then phones them on speakerphone. Nothing is sent without a detected crash or your tap.",
+  },
+  {
+    icon: 'shield-checkmark' as const,
+    title: 'Tip: Android Emergency SOS',
+    body: "As a backup, turn on Android's Emergency SOS (Settings → Safety & emergency): pressing power 5 times calls 112 and shares your location, even if this app can't.",
   },
   {
     icon: 'notifications' as const,

@@ -30,6 +30,10 @@ export type Settings = {
   emergencyNumber: string;
   /** Only detect crashes after GPS shows the rider moving (prevents false alarms from handling the phone). */
   detectOnlyWhenMoving: boolean;
+  /** After no response, phone the emergency contacts (speakerphone), one by one. */
+  autoCallContacts: boolean;
+  /** After no response, sound a siren and show rider info to bystanders on the lock screen. */
+  sirenOnNoResponse: boolean;
 };
 
 export type RoutePoint = LatLng & { t: number; speed: number | null };
