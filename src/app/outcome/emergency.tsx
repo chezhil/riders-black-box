@@ -1,20 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Button, Card, Disclaimer, Row, Screen, T, TestBanner } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
 import { notifyContacts, relayConfigured, startLocationFollowUps, type NotifyResult } from '@/lib/alerts';
-import { callEmergencyNumber, finishIncident, useIsTestReport } from '@/lib/flow';
+import { LocateHospitalButton } from '@/components/emergency-actions';
+import { callContact, callEmergencyNumber, finishIncident, useIsTest } from '@/lib/flow';
 import { mapsLink } from '@/lib/geo';
 import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { actions, useApp } from '@/lib/store';
 import type { LatLng } from '@/lib/types';
 
 export default function Emergency() {
-  const { reportId } = useLocalSearchParams<{ reportId?: string }>();
+  const { reportId, crashId } = useLocalSearchParams<{ reportId?: string; crashId?: string }>();
   const report = useApp((s) => s.reports.find((r) => r.id === reportId));
   const emergencyNumber = useApp((s) => s.settings.emergencyNumber);
   const contacts = useApp((s) => s.contacts);
@@ -22,7 +23,7 @@ export default function Emergency() {
   const [address, setAddress] = useState<string | null>(null);
   const [notify, setNotify] = useState<NotifyResult | 'sending' | null>(null);
   const sent = useRef(false);
-  const isTest = useIsTestReport(reportId);
+  const isTest = useIsTest({ reportId, crashId });
 
   const callEmergency = () => callEmergencyNumber(emergencyNumber, isTest);
 
@@ -104,6 +105,7 @@ export default function Emergency() {
         <Text style={styles.callText}>Call {emergencyNumber}</Text>
         <Text style={styles.callSub}>{isTest ? 'Disabled in test' : 'Emergency services'}</Text>
       </Pressable>
+      <LocateHospitalButton reportId={reportId} crashId={crashId} />
       {isTest && <TestBanner />}
 
       <Card>
@@ -164,16 +166,14 @@ export default function Emergency() {
           icon="person"
           variant="secondary"
           size="lg"
-          onPress={() => Linking.openURL(`tel:${contacts[0].phone}`)}
+          onPress={() => callContact(contacts[0].phone)}
         />
       )}
       <Button
-        label="Find nearest hospital"
-        icon="business"
-        variant="secondary"
-        onPress={() => router.push({ pathname: '/outcome/hospitals', params: { reportId: reportId ?? '' } })}
+        label="Help has arrived / I'm safe"
+        variant="ghost"
+        onPress={() => finishIncident(reportId, 'help_arrived', crashId)}
       />
-      <Button label="Help has arrived / I'm safe" variant="ghost" onPress={() => finishIncident(reportId, 'help_arrived')} />
       <Disclaimer>
         While you wait: stay still if your neck or back hurts, and keep your helmet on. Press firmly on heavy
         bleeding with a clean cloth.

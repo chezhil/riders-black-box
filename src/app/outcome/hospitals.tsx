@@ -6,7 +6,7 @@ import { ActivityIndicator, Alert, Linking, View } from 'react-native';
 import { Badge, Button, Card, Disclaimer, Row, Screen, T, TestBanner } from '@/components/ui';
 import { Colors, SeverityColors, Spacing } from '@/constants/theme';
 import { notifyContacts } from '@/lib/alerts';
-import { callEmergencyNumber, finishIncident, useIsTestReport } from '@/lib/flow';
+import { callEmergencyNumber, finishIncident, useIsTest } from '@/lib/flow';
 import { directionsLink, formatDistance } from '@/lib/geo';
 import { cachedNearby, findNearbyFacilities, type Facility } from '@/lib/hospitals';
 import { highestSeverity } from '@/lib/injury';
@@ -28,12 +28,12 @@ type LoadState =
     };
 
 export default function Hospitals() {
-  const { reportId } = useLocalSearchParams<{ reportId?: string }>();
+  const { reportId, crashId } = useLocalSearchParams<{ reportId?: string; crashId?: string }>();
   const report = useApp((s) => s.reports.find((r) => r.id === reportId));
   const emergencyNumber = useApp((s) => s.settings.emergencyNumber);
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [notifying, setNotifying] = useState(false);
-  const isTest = useIsTestReport(reportId);
+  const isTest = useIsTest({ reportId, crashId });
 
   const reportLocation = report?.location ?? null;
 
@@ -69,7 +69,7 @@ export default function Hospitals() {
   /** Escalate: dial 112 right away, and open the Emergency screen (alerts contacts, shows location). */
   function callEmergency() {
     if (reportId) actions.updateReport(reportId, { outcomePath: 'emergency' });
-    router.replace({ pathname: '/outcome/emergency', params: { reportId: reportId ?? '' } });
+    router.replace({ pathname: '/outcome/emergency', params: { reportId: reportId ?? '', crashId: crashId ?? '' } });
     callEmergencyNumber(emergencyNumber, isTest);
   }
 
@@ -206,7 +206,7 @@ export default function Hospitals() {
           </Card>
         ))}
 
-      <Button label="Mark as handled" icon="checkmark" variant="ghost" onPress={() => finishIncident(reportId)} />
+      <Button label="Mark as handled" icon="checkmark" variant="ghost" onPress={() => finishIncident(reportId, 'handled', crashId)} />
       <Disclaimer>Hospital data from OpenStreetMap contributors. Distances are straight-line.</Disclaimer>
     </Screen>
   );

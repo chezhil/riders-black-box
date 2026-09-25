@@ -1,5 +1,8 @@
 import { router } from 'expo-router';
-import { Alert, Linking } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
+
+import { RideMonitor } from '@modules/ride-monitor';
+
 
 import { sendAllClear, stopLocationFollowUps, type AllClearKind } from './alerts';
 import { rideSession } from './ride-session';
@@ -36,11 +39,18 @@ export function endIncident(
 }
 
 /** Close out a crash / injury flow and go back to the ride (if one is running) or home. */
-export function finishIncident(reportId?: string, kind: AllClearKind = 'handled') {
+export function finishIncident(reportId?: string, kind: AllClearKind = 'handled', crashId?: string) {
   if (reportId) actions.updateReport(reportId, { handled: true });
-  endIncident({ reportId }, kind);
+  endIncident({ reportId: reportId || null, crashId: crashId || null }, kind);
   rideSession.resumeDetection();
   router.dismissTo(rideSession.getSnapshot().active ? '/active-ride' : '/');
+}
+
+/** Phone an emergency contact: rings straight away on Android, else opens the dialer. */
+export function callContact(phone: string) {
+  const number = phone.replace(/[^\d+]/g, '');
+  if (Platform.OS === 'android' && RideMonitor?.placeCall(number)) return;
+  Linking.openURL(`tel:${number}`);
 }
 
 /**
@@ -64,6 +74,18 @@ export function callEmergencyNumber(emergencyNumber: string, isTest: boolean) {
  */
 export function useIsTestCrash(crashId: string | null | undefined) {
   return useApp((s) => (crashId ? s.crashes.find((c) => c.id === crashId)?.detectedVia === 'simulated' : false));
+}
+
+/** Open the nearby-hospitals list, carrying the incident so demo protection still applies. */
+export function openNearbyHospitals({ reportId, crashId }: { reportId?: string | null; crashId?: string | null }) {
+  router.push({ pathname: '/outcome/hospitals', params: { reportId: reportId ?? '', crashId: crashId ?? '' } });
+}
+
+/** True for anything that came from a simulated crash, whether we know the report, the crash, or both. */
+export function useIsTest({ reportId, crashId }: { reportId?: string | null; crashId?: string | null }) {
+  const reportIsTest = useIsTestReport(reportId);
+  const crashIsTest = useIsTestCrash(crashId);
+  return reportIsTest || crashIsTest;
 }
 
 /** Same, for an injury report (true when it came from a simulated crash). */

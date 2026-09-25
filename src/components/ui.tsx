@@ -247,7 +247,7 @@ export function TestBanner({ text }: { text?: string }) {
     <Row style={styles.testBanner} gap={Spacing.sm}>
       <Ionicons name="flask" size={18} color={Colors.info} />
       <Text style={styles.testBannerText}>
-        {text ?? 'TEST: simulated crash. Nothing is sent and nobody is called: no SMS, no 112, no hospitals.'}
+        {text ?? 'TEST: simulated crash. No automatic texts or calls, and 112 and hospitals are never dialled. You can still call your own contacts.'}
       </Text>
     </Row>
   );

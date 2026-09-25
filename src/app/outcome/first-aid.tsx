@@ -2,15 +2,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { View } from 'react-native';
 
+import { EmergencyActions } from '@/components/emergency-actions';
 import { Button, Card, Disclaimer, Row, Screen, T } from '@/components/ui';
 import { Colors, SeverityColors, Spacing } from '@/constants/theme';
-import { finishIncident } from '@/lib/flow';
+import { finishIncident, useIsTestReport } from '@/lib/flow';
 import { BODY_PART_LABELS, ESCALATE_IF, firstAidCardsFor } from '@/lib/injury';
 import { actions, useApp } from '@/lib/store';
 
 export default function FirstAid() {
   const { reportId } = useLocalSearchParams<{ reportId: string }>();
   const report = useApp((s) => s.reports.find((r) => r.id === reportId));
+  const isTest = useIsTestReport(reportId);
   if (!report) return null;
 
   const cards = firstAidCardsFor(report.affectedAreas);
@@ -22,6 +24,7 @@ export default function FirstAid() {
 
   return (
     <Screen edges={['bottom', 'left', 'right']}>
+      <EmergencyActions reportId={reportId} crashId={report.crashEventId} isTest={isTest} />
       <Row>
         <Ionicons name="bandage" size={28} color={SeverityColors.minor} />
         <View style={{ flex: 1 }}>

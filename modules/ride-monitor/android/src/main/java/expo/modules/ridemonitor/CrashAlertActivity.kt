@@ -171,14 +171,19 @@ class CrashAlertActivity : Activity() {
       button("CALL $number (EMERGENCY)", RED, Color.WHITE, 22f) { callEmergency(number, c.isTest) },
       LinearLayout.LayoutParams(MATCH_PARENT, dp(76)).apply { topMargin = dp(16) },
     )
+    root.addView(
+      button("Locate nearest hospital", CARD, Color.WHITE, 18f, stroke = BORDER) { openNearbyHospitals(c) },
+      LinearLayout.LayoutParams(MATCH_PARENT, dp(60)).apply { topMargin = dp(10) },
+    )
 
     cfg?.contactPhones?.forEachIndexed { i, phone ->
       if (phone.isBlank()) return@forEachIndexed
       val name = cfg.contactNames.getOrNull(i)?.ifBlank { null } ?: phone
       root.addView(
         button("Call $name (emergency contact)", CARD, Color.WHITE, 17f, stroke = BORDER) {
-          if (c.isTest) toast("Test: not calling $name")
-          else service?.responder?.callNow(name, phone) ?: dial(phone)
+          // Calling your own emergency contact is always allowed, demo or not:
+          // demos only block automatic texts/calls, 112 and hospitals.
+          service?.responder?.callNow(name, phone) ?: callDirect(phone)
         },
         LinearLayout.LayoutParams(MATCH_PARENT, dp(60)).apply { topMargin = dp(10) },
       )
@@ -222,6 +227,23 @@ class CrashAlertActivity : Activity() {
     runCatching {
       startActivity(Intent(if (canCall) Intent.ACTION_CALL else Intent.ACTION_DIAL, Uri.parse("tel:$number")))
     }.onFailure { dial(number) }
+  }
+
+  /** Hospitals around the crash in Google Maps (or any maps app). Asks to unlock first. */
+  private fun openNearbyHospitals(c: CrashState) {
+    val last = RideMonitor.service?.points?.lastOrNull()
+    val lat = c.lat ?: last?.lat
+    val lng = c.lng ?: last?.lng
+    val uri = if (lat != null && lng != null) Uri.parse("geo:$lat,$lng?q=hospital") else Uri.parse("geo:0,0?q=hospital")
+    runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+      .onFailure {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/hospital"))) }
+      }
+  }
+
+  /** Rings the number straight away (CALL_PHONE granted), else opens the dialer. */
+  private fun callDirect(phone: String) {
+    if (!CallPlacer.place(this, phone)) dial(phone)
   }
 
   private fun dial(phone: String) {

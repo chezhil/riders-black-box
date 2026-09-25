@@ -103,6 +103,8 @@ type RideMonitorNative = {
   resolveCrash(outcome: 'fine' | 'help'): void;
   resumeDetection(): void;
   stopEmergency(): void;
+  /** Ring a non-emergency number directly (CALL_PHONE). False if not permitted. */
+  placeCall(phone: string): boolean;
   stopSiren(): void;
   getEmergency(): NativeEmergency | null;
   sendSms(phones: string[], body: string): Promise<{ sent: number; error: string | null }>;

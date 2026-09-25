@@ -146,6 +146,9 @@ class RideMonitorModule : Module() {
       context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
+    /** Ring a (non-emergency) number directly. False if not allowed; the caller then opens the dialer. */
+    Function("placeCall") { phone: String -> CallPlacer.place(context, phone) }
+
     Function("requestIgnoreBatteryOptimizations") {
       val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
       context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
