@@ -89,10 +89,10 @@ export default function CheckIn() {
           <Row>
             <Ionicons name="alert-circle" size={20} color={Colors.danger} />
             <T.Body style={{ flex: 1, fontWeight: '700' }}>
-              {crash?.contactsNotified
-                ? isTest
-                  ? 'Test alert texted to your emergency contacts'
-                  : 'Your emergency contacts have been texted your location'
+              {isTest
+                ? 'Test countdown ended. In a real crash your emergency contacts would now be texted your location.'
+                : crash?.contactsNotified
+                  ? 'Your emergency contacts have been texted your location'
                 : relayConfigured || backgroundCapable
                   ? 'Alerting your emergency contacts…'
                   : 'Alert message ready in your SMS app. Tap Send.'}

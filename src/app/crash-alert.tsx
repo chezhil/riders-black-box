@@ -115,7 +115,7 @@ export default function CrashAlert() {
         <Text style={styles.title}>Are you OK?</Text>
         <Text style={styles.sub}>
           {isTest
-            ? "If you don't respond, only your emergency contacts get a text, clearly marked as a test."
+            ? "This is a test: if you don't respond, nothing is sent and nobody is called."
             : "We detected a possible crash. If you don't respond, your emergency contacts will get your location."}
         </Text>
       </View>

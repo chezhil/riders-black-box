@@ -61,8 +61,6 @@ export type StartOptions = {
   contactPhones: string[];
   /** Alert SMS with {LINK} and {TIME} placeholders. */
   alertTemplate: string;
-  /** Same, marked as a test; used for simulated crashes. */
-  testAlertTemplate: string;
   autoSms: boolean;
 };
 

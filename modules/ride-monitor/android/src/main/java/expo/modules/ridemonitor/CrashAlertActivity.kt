@@ -52,7 +52,7 @@ class CrashAlertActivity : Activity() {
     window.navigationBarColor = BG
     setContentView(buildUi())
     if (RideMonitor.crash?.isTest == true) {
-      subText.text = "TEST (simulated crash). If you don't respond, only your emergency contacts get a test text."
+      subText.text = "TEST (simulated crash). Nothing is sent if you don't respond: no SMS, no calls."
     }
   }
 

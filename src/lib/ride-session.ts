@@ -177,7 +177,6 @@ export const rideSession = {
         countdownSeconds: settings.countdownSeconds,
         contactPhones: contacts.map((c) => c.phone),
         alertTemplate: buildAlertTemplate(),
-        testAlertTemplate: buildAlertTemplate({ test: true }),
         autoSms: true,
       });
       update({ ...IDLE, active: true, rideId, startTime: Date.now(), monitoring: true });

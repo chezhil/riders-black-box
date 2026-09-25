@@ -57,8 +57,13 @@ export default function Hospitals() {
       test: isTest,
     });
     setNotifying(false);
-    if (result.delivered) actions.updateReport(report.id, { contactsNotified: true });
-    else if (result.error) Alert.alert("Couldn't notify contacts", result.error);
+    if (result.skippedTest) {
+      Alert.alert('Test: not sent', "This is a simulated crash, so your emergency contacts aren't texted.");
+    } else if (result.delivered) {
+      actions.updateReport(report.id, { contactsNotified: true });
+    } else if (result.error) {
+      Alert.alert("Couldn't notify contacts", result.error);
+    }
   }
 
   /** Escalate: dial 112 right away, and open the Emergency screen (alerts contacts, shows location). */

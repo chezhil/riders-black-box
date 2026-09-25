@@ -34,24 +34,13 @@ const SEVERITY_TEXT: Record<AlertSeverity, string> = {
   severe: 'SEVERE',
 };
 
-/** `test`: a simulated crash. Same message, clearly marked so contacts know it's a drill. */
-type AlertOptions = { test?: boolean };
-
-const TEST_PREFIX = "🧪 TEST ALERT from Rider's Black Box: this is a simulated crash, no action needed. ";
-
-export function buildAlertMessage(
-  severity: AlertSeverity,
-  location: LatLng | null,
-  { test = false }: AlertOptions = {},
-) {
-  const msg = renderAlert(severity, location ? mapsLink(location) : '(location unavailable)', formatTime(Date.now()));
-  return test ? TEST_PREFIX + msg : msg;
+export function buildAlertMessage(severity: AlertSeverity, location: LatLng | null) {
+  return renderAlert(severity, location ? mapsLink(location) : '(location unavailable)', formatTime(Date.now()));
 }
 
 /** The no-response alert with {LINK} and {TIME} placeholders, filled in by the native service. */
-export function buildAlertTemplate({ test = false }: AlertOptions = {}) {
-  const msg = renderAlert('unresponsive', '{LINK}', '{TIME}');
-  return test ? TEST_PREFIX + msg : msg;
+export function buildAlertTemplate() {
+  return renderAlert('unresponsive', '{LINK}', '{TIME}');
 }
 
 function renderAlert(severity: AlertSeverity, where: string, time: string) {
@@ -77,10 +66,22 @@ function renderAlert(severity: AlertSeverity, where: string, time: string) {
   return msg;
 }
 
-export type NotifyResult = { channel: NotifyChannel; delivered: boolean; error?: string };
+export type NotifyResult = {
+  channel: NotifyChannel;
+  delivered: boolean;
+  error?: string;
+  /** Simulated (demo) crash: deliberately not sent. */
+  skippedTest?: boolean;
+};
 
-export function notifyContacts(severity: AlertSeverity, location: LatLng | null, opts: AlertOptions = {}) {
-  return sendToContacts(buildAlertMessage(severity, location, opts));
+/** `test`: a simulated (demo) crash. Nothing is sent. */
+export async function notifyContacts(
+  severity: AlertSeverity,
+  location: LatLng | null,
+  { test = false }: { test?: boolean } = {},
+): Promise<NotifyResult> {
+  if (test) return { channel: 'none', delivered: false, skippedTest: true };
+  return sendToContacts(buildAlertMessage(severity, location));
 }
 
 async function sendToContacts(

@@ -32,7 +32,6 @@ class StartOptions : Record {
   @Field val countdownSeconds: Int = 30
   @Field val contactPhones: List<String> = emptyList()
   @Field val alertTemplate: String = ""
-  @Field val testAlertTemplate: String = ""
   @Field val autoSms: Boolean = true
 }
 
@@ -71,7 +70,6 @@ class RideMonitorModule : Module() {
         countdownSeconds = options.countdownSeconds,
         contactPhones = options.contactPhones,
         alertTemplate = options.alertTemplate,
-        testAlertTemplate = options.testAlertTemplate,
         autoSms = options.autoSms,
       )
       val intent = Intent(context, RideMonitorService::class.java).setAction(RideMonitorService.ACTION_START)

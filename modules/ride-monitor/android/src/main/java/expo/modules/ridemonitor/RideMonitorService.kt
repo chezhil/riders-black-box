@@ -47,8 +47,6 @@ data class RideConfig(
   val contactPhones: List<String>,
   /** Alert text with {LINK} and {TIME} placeholders, rendered by the JS app. */
   val alertTemplate: String,
-  /** Same, clearly marked as a test; used for simulated crashes. */
-  val testAlertTemplate: String,
   val autoSms: Boolean,
 )
 
@@ -65,7 +63,7 @@ data class CrashState(
   var smsSent: Int = 0,
   var smsError: String? = null,
 ) {
-  /** Simulated crash: a drill that only texts emergency contacts, clearly marked as a test. */
+  /** Simulated (demo) crash: nothing is sent and nobody is called. */
   val isTest get() = via == "simulated"
 }
 
@@ -351,7 +349,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     if (c.status != "countdown") return
     stopAlarm()
     c.status = "alerted"
-    if (config.autoSms) sendAlertSms(c)
+    if (config.autoSms && !c.isTest) sendAlertSms(c)
     postAlertedNotification(c)
     RideMonitor.emit("onCrashResolved", crashMap(c))
   }
@@ -373,8 +371,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       "(location unavailable)"
     }
     val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(c.startedAt))
-    val template = if (c.isTest) config.testAlertTemplate else config.alertTemplate
-    val body = template.replace("{LINK}", link).replace("{TIME}", time)
+    val body = config.alertTemplate.replace("{LINK}", link).replace("{TIME}", time)
     val result = SmsSender.send(this, config.contactPhones, body)
     c.smsSent = result.first
     c.smsError = result.second
@@ -472,7 +469,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       .setSmallIcon(android.R.drawable.stat_sys_warning)
       .setContentTitle(if (c.isTest) "TEST: Are you OK? (simulated crash)" else "Are you OK? Possible crash detected")
       .setContentText(
-        if (c.isTest) "Test: if you don't respond, only your emergency contacts get a test text."
+        if (c.isTest) "Test: nothing is sent if you don't respond. No SMS, no calls."
         else "Contacts will be alerted with your location unless you respond.",
       )
       .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -496,14 +493,14 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
 
   private fun postAlertedNotification(c: CrashState) {
     val text = when {
-      c.smsSent > 0 && c.isTest -> "Test alert texted to ${c.smsSent} emergency contact${if (c.smsSent > 1) "s" else ""}. Tap to continue the test."
+      c.isTest -> "Test countdown ended. In a real crash your emergency contacts would now be texted your location. Tap to continue."
       c.smsSent > 0 -> "Your location was texted to ${c.smsSent} emergency contact${if (c.smsSent > 1) "s" else ""}. Tap to get help."
       c.smsError != null -> "Couldn't text contacts: ${c.smsError}. Tap to get help."
       else -> "Tap to get help."
     }
     val n = NotificationCompat.Builder(this, CRASH_CHANNEL)
       .setSmallIcon(android.R.drawable.stat_sys_warning)
-      .setContentTitle(if (c.isTest) "TEST: no response, test alert sent" else "No response: emergency alert sent")
+      .setContentTitle(if (c.isTest) "TEST: no response (nothing sent)" else "No response: emergency alert sent")
       .setContentText(text)
       .setStyle(NotificationCompat.BigTextStyle().bigText(text))
       .setPriority(NotificationCompat.PRIORITY_HIGH)

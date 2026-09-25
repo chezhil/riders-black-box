@@ -72,12 +72,14 @@ export default function Emergency() {
   }, [location]);
 
   const notifyText =
-    notify === 'sending'
+    notify !== 'sending' && notify?.skippedTest
+      ? `Test: no SMS sent. In a real emergency your ${contacts.length} contact${contacts.length === 1 ? ' is' : 's are'} texted automatically.`
+      : notify === 'sending'
       ? 'Alerting your emergency contacts…'
       : notify == null
         ? 'Getting your location…'
         : notify.channel === 'relay' || notify.channel === 'sim'
-          ? `${isTest ? 'TEST ' : ''}SEVERE alert texted to ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
+          ? `SEVERE alert texted to ${contacts.length} contact${contacts.length === 1 ? '' : 's'}`
           : notify.channel === 'sms_composer'
             ? 'SEVERE alert opened in your SMS app. Make sure it was sent.'
             : `Contacts not alerted: ${notify.error}`;
@@ -136,9 +138,9 @@ export default function Emergency() {
             <ActivityIndicator color={Colors.accent} />
           ) : (
             <Ionicons
-              name={notifyOk ? 'checkmark-circle' : 'alert-circle'}
+              name={notify.skippedTest ? 'information-circle' : notifyOk ? 'checkmark-circle' : 'alert-circle'}
               size={22}
-              color={notifyOk ? Colors.ok : Colors.danger}
+              color={notify.skippedTest ? Colors.info : notifyOk ? Colors.ok : Colors.danger}
             />
           )}
           <T.Body style={{ flex: 1, fontWeight: '600' }}>{notifyText}</T.Body>
@@ -146,7 +148,7 @@ export default function Emergency() {
         {contacts.length > 0 && (
           <T.Dim>{contacts.map((c) => `${c.name} (${c.relationship || 'contact'})`).join(', ')}</T.Dim>
         )}
-        {notify !== 'sending' && notify != null && (
+        {notify !== 'sending' && notify != null && !notify.skippedTest && (
           <Button label="Send alert again" icon="refresh" variant="secondary" onPress={() => sendAlert(location)} />
         )}
         {!relayConfigured && !backgroundCapable && (
