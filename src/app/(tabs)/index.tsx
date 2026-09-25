@@ -7,7 +7,7 @@ import { Button, Card, Row, Screen, Stat, T } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
 import { useNow } from '@/hooks/use-now';
 import { formatDateTime, formatDistance, formatDuration, toKmh } from '@/lib/geo';
-import { rideSession } from '@/lib/ride-session';
+import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { useApp } from '@/lib/store';
 
 export default function Home() {
@@ -105,7 +105,11 @@ export default function Home() {
       ) : (
         <Card>
           <T.Label>Last ride</T.Label>
-          <T.Dim>No rides yet. Tap Start Ride before you set off. Keep the app open and the phone mounted or in a pocket.</T.Dim>
+          <T.Dim>
+            {backgroundCapable
+              ? 'No rides yet. Tap Start Ride before you set off, then use Google Maps as normal.'
+              : 'No rides yet. Tap Start Ride before you set off. Keep the app open and the phone mounted or in a pocket.'}
+          </T.Dim>
         </Card>
       )}
     </Screen>
