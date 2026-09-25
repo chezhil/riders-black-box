@@ -61,6 +61,20 @@ export default function Hospitals() {
     else if (result.error) Alert.alert("Couldn't notify contacts", result.error);
   }
 
+  /** Escalate: dial 112 right away, and open the Emergency screen (alerts contacts, shows location). */
+  function callEmergency() {
+    if (reportId) actions.updateReport(reportId, { outcomePath: 'emergency' });
+    router.replace({ pathname: '/outcome/emergency', params: { reportId: reportId ?? '' } });
+    if (isTest) {
+      Alert.alert(
+        `Test: not calling ${emergencyNumber}`,
+        `This is a simulated crash, so emergency services aren't called. In a real emergency this button calls ${emergencyNumber} immediately.`,
+      );
+      return;
+    }
+    Linking.openURL(`tel:${emergencyNumber}`);
+  }
+
   function callFacility(phone: string) {
     if (isTest) {
       Alert.alert('Test: not calling', "This is a simulated crash, so hospitals aren't called.");
@@ -88,6 +102,13 @@ export default function Hospitals() {
         </View>
       </Row>
 
+      <Button
+        label={`It's worse: call ${emergencyNumber}`}
+        icon="call"
+        variant="danger"
+        size="lg"
+        onPress={callEmergency}
+      />
       {isTest && <TestBanner />}
       <Row>
         <Button
@@ -187,16 +208,6 @@ export default function Hospitals() {
           </Card>
         ))}
 
-      <Button
-        label={`It's worse: call ${emergencyNumber}`}
-        icon="call"
-        variant="danger"
-        size="lg"
-        onPress={() => {
-          if (reportId) actions.updateReport(reportId, { outcomePath: 'emergency' });
-          router.replace({ pathname: '/outcome/emergency', params: { reportId: reportId ?? '' } });
-        }}
-      />
       <Button label="Mark as handled" icon="checkmark" variant="ghost" onPress={() => finishIncident(reportId)} />
       <Disclaimer>Hospital data from OpenStreetMap contributors. Distances are straight-line.</Disclaimer>
     </Screen>

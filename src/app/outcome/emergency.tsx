@@ -98,8 +98,6 @@ export default function Emergency() {
         <T.Label style={{ color: Colors.danger }}>Emergency</T.Label>
         <T.Title style={{ textAlign: 'center' }}>Call for help now</T.Title>
       </View>
-      {isTest && <TestBanner />}
-
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Call emergency services ${emergencyNumber}`}
@@ -113,6 +111,7 @@ export default function Emergency() {
         <Text style={styles.callText}>Call {emergencyNumber}</Text>
         <Text style={styles.callSub}>{isTest ? 'Disabled in test' : 'Emergency services'}</Text>
       </Pressable>
+      {isTest && <TestBanner />}
 
       <Card>
         <Row>
