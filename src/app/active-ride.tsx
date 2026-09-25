@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { useEffect, useSyncExternalStore } from 'react';
 import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
 
-import { RouteTrail } from '@/components/route-trail';
+import { RouteMap } from '@/components/route-map';
 import { Button, Card, Row, Screen, Stat, T } from '@/components/ui';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useNow } from '@/hooks/use-now';
@@ -82,7 +82,7 @@ export default function ActiveRide() {
         )}
       </Card>
 
-      <RouteTrail
+      <RouteMap
         points={ride.points}
         markers={ride.hardBrakes.map((b) => ({ ...b, color: Colors.danger }))}
       />

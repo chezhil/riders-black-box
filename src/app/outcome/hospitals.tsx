@@ -8,7 +8,7 @@ import { Colors, SeverityColors, Spacing } from '@/constants/theme';
 import { notifyContacts } from '@/lib/alerts';
 import { finishIncident, useIsTestReport } from '@/lib/flow';
 import { directionsLink, formatDistance } from '@/lib/geo';
-import { findNearbyFacilities, type Facility } from '@/lib/hospitals';
+import { cachedNearby, findNearbyFacilities, type Facility } from '@/lib/hospitals';
 import { highestSeverity } from '@/lib/injury';
 import { rideSession } from '@/lib/ride-session';
 import { actions, useApp } from '@/lib/store';
@@ -17,7 +17,15 @@ import type { LatLng } from '@/lib/types';
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string; location: LatLng | null }
-  | { status: 'done'; facilities: Facility[]; location: LatLng };
+  | {
+      status: 'done';
+      facilities: Facility[];
+      location: LatLng;
+      /** Results came from the cache filled during the ride. */
+      fromRideCache?: boolean;
+      /** A live refresh is still in flight. */
+      refreshing?: boolean;
+    };
 
 export default function Hospitals() {
   const { reportId } = useLocalSearchParams<{ reportId?: string }>();
@@ -30,12 +38,16 @@ export default function Hospitals() {
   const reportLocation = report?.location ?? null;
 
   useEffect(() => {
-    lookup(reportLocation).then(setState);
+    let active = true;
+    lookup(reportLocation, (s) => active && setState(s));
+    return () => {
+      active = false;
+    };
   }, [reportLocation]);
 
   function retry() {
     setState({ status: 'loading' });
-    lookup(reportLocation).then(setState);
+    lookup(reportLocation, setState);
   }
 
   async function notify() {
@@ -105,6 +117,17 @@ export default function Hospitals() {
         </Card>
       )}
 
+      {state.status === 'done' && state.fromRideCache && (
+        <Row>
+          {state.refreshing && <ActivityIndicator size="small" color={Colors.textDim} />}
+          <T.Dim style={{ flex: 1, fontSize: 12 }}>
+            {state.refreshing
+              ? 'Showing hospitals saved during your ride. Updating…'
+              : "Showing hospitals saved during your ride (couldn't refresh: weak signal?)."}
+          </T.Dim>
+        </Row>
+      )}
+
       {state.status === 'done' && state.facilities.length === 0 && (
         <Card>
           <T.Body>No hospitals found nearby in OpenStreetMap.</T.Body>
@@ -136,14 +159,30 @@ export default function Hospitals() {
                 style={{ flex: 1 }}
                 onPress={() => Linking.openURL(directionsLink(f.location))}
               />
-              <Button
-                label="Call"
-                icon="call"
-                variant="secondary"
-                style={{ flex: 1 }}
-                disabled={!f.phone}
-                onPress={() => f.phone && callFacility(f.phone)}
-              />
+              {f.phone ? (
+                <Button
+                  label="Call"
+                  icon="call"
+                  variant="secondary"
+                  style={{ flex: 1 }}
+                  onPress={() => callFacility(f.phone!)}
+                />
+              ) : (
+                // OpenStreetMap often lacks phone numbers; Google Maps' place page usually has one.
+                <Button
+                  label="Find number"
+                  icon="search"
+                  variant="secondary"
+                  style={{ flex: 1 }}
+                  onPress={() =>
+                    Linking.openURL(
+                      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                        [f.name, f.address].filter(Boolean).join(', '),
+                      )}`,
+                    )
+                  }
+                />
+              )}
             </Row>
           </Card>
         ))}
@@ -164,12 +203,24 @@ export default function Hospitals() {
   );
 }
 
-async function lookup(known: LatLng | null): Promise<LoadState> {
+/** Shows hospitals cached during the ride straight away (if any), then the live results. */
+async function lookup(known: LatLng | null, onState: (s: LoadState) => void) {
   const location = known ?? (await rideSession.currentLocation());
-  if (!location) return { status: 'error', message: "Couldn't get your location.", location: null };
+  if (!location) {
+    onState({ status: 'error', message: "Couldn't get your location.", location: null });
+    return;
+  }
+  const cached = await cachedNearby(location);
+  if (cached) {
+    onState({ status: 'done', facilities: cached.facilities, location, fromRideCache: true, refreshing: true });
+  }
   try {
-    return { status: 'done', facilities: await findNearbyFacilities(location), location };
+    onState({ status: 'done', facilities: await findNearbyFacilities(location), location });
   } catch {
-    return { status: 'error', message: "Couldn't load nearby hospitals. You may be offline.", location };
+    onState(
+      cached
+        ? { status: 'done', facilities: cached.facilities, location, fromRideCache: true, refreshing: false }
+        : { status: 'error', message: "Couldn't load nearby hospitals. You may be offline.", location },
+    );
   }
 }

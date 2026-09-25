@@ -1,7 +1,7 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Alert } from 'react-native';
 
-import { RouteTrail } from '@/components/route-trail';
+import { RouteMap } from '@/components/route-map';
 import { Button, Card, ListItem, Row, Screen, Stat, T } from '@/components/ui';
 import { Colors, SeverityColors, Spacing } from '@/constants/theme';
 import { formatDateTime, formatDistance, formatDuration, formatTime, toKmh } from '@/lib/geo';
@@ -37,7 +37,7 @@ export default function RideDetail() {
   return (
     <Screen edges={['bottom', 'left', 'right']}>
       <Stack.Screen options={{ title: formatDateTime(ride.startTime) }} />
-      <RouteTrail
+      <RouteMap
         points={ride.routePoints}
         height={260}
         markers={[

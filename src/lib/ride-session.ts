@@ -31,6 +31,7 @@ import {
   type DetectorEvent,
 } from './crash-detector';
 import { distanceM } from './geo';
+import { prefetchNearby } from './hospitals';
 import { actions, getState, newId } from './store';
 import type { HardBrakeEvent, LatLng, Ride, RoutePoint } from './types';
 
@@ -304,6 +305,8 @@ function applyNativeSnapshot(s: NativeSnapshot, points: RoutePoint[]) {
     armed: s.armed,
     lastBump: s.lastBump,
   });
+  // Keep nearby hospitals ready in case of a crash (every ~5 km).
+  if (snap.lastLocation) prefetchNearby(snap.lastLocation);
 }
 
 function nativeCrashLocation(c: NativeCrash): LatLng | null {
@@ -430,6 +433,7 @@ const jsEngine = (() => {
       lastLocation: { lat, lng },
       gpsAccuracy: accuracy ?? null,
     });
+    prefetchNearby({ lat, lng });
   }
 
   return {
