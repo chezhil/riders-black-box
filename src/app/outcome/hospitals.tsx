@@ -6,7 +6,7 @@ import { ActivityIndicator, Alert, Linking, View } from 'react-native';
 import { Badge, Button, Card, Disclaimer, Row, Screen, T, TestBanner } from '@/components/ui';
 import { Colors, SeverityColors, Spacing } from '@/constants/theme';
 import { notifyContacts } from '@/lib/alerts';
-import { finishIncident, useIsTestReport } from '@/lib/flow';
+import { callEmergencyNumber, finishIncident, useIsTestReport } from '@/lib/flow';
 import { directionsLink, formatDistance } from '@/lib/geo';
 import { cachedNearby, findNearbyFacilities, type Facility } from '@/lib/hospitals';
 import { highestSeverity } from '@/lib/injury';
@@ -65,14 +65,7 @@ export default function Hospitals() {
   function callEmergency() {
     if (reportId) actions.updateReport(reportId, { outcomePath: 'emergency' });
     router.replace({ pathname: '/outcome/emergency', params: { reportId: reportId ?? '' } });
-    if (isTest) {
-      Alert.alert(
-        `Test: not calling ${emergencyNumber}`,
-        `This is a simulated crash, so emergency services aren't called. In a real emergency this button calls ${emergencyNumber} immediately.`,
-      );
-      return;
-    }
-    Linking.openURL(`tel:${emergencyNumber}`);
+    callEmergencyNumber(emergencyNumber, isTest);
   }
 
   function callFacility(phone: string) {

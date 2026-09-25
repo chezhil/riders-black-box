@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { Alert, Linking } from 'react-native';
 
 import { stopLocationFollowUps } from './alerts';
 import { rideSession } from './ride-session';
@@ -10,6 +11,21 @@ export function finishIncident(reportId?: string) {
   stopLocationFollowUps();
   rideSession.resumeDetection();
   router.dismissTo(rideSession.getSnapshot().active ? '/active-ride' : '/');
+}
+
+/**
+ * Dial the emergency number, unless this is a simulated crash: then explain
+ * instead, so a demo can never reach emergency services.
+ */
+export function callEmergencyNumber(emergencyNumber: string, isTest: boolean) {
+  if (isTest) {
+    Alert.alert(
+      `Test: not calling ${emergencyNumber}`,
+      `This is a simulated crash, so emergency services aren't called. In a real emergency this button calls ${emergencyNumber} immediately.`,
+    );
+    return;
+  }
+  Linking.openURL(`tel:${emergencyNumber}`);
 }
 
 /**

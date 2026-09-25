@@ -2,12 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Button, Card, Disclaimer, Row, Screen, T, TestBanner } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
 import { notifyContacts, relayConfigured, startLocationFollowUps, type NotifyResult } from '@/lib/alerts';
-import { finishIncident, useIsTestReport } from '@/lib/flow';
+import { callEmergencyNumber, finishIncident, useIsTestReport } from '@/lib/flow';
 import { mapsLink } from '@/lib/geo';
 import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { actions, useApp } from '@/lib/store';
@@ -24,16 +24,7 @@ export default function Emergency() {
   const sent = useRef(false);
   const isTest = useIsTestReport(reportId);
 
-  function callEmergency() {
-    if (isTest) {
-      Alert.alert(
-        'Test: not calling ' + emergencyNumber,
-        `This is a simulated crash, so emergency services aren't called. In a real emergency this button calls ${emergencyNumber} immediately.`,
-      );
-      return;
-    }
-    Linking.openURL(`tel:${emergencyNumber}`);
-  }
+  const callEmergency = () => callEmergencyNumber(emergencyNumber, isTest);
 
   useEffect(() => {
     (async () => {

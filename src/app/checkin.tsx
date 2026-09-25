@@ -7,7 +7,7 @@ import { BodyMap, type BodyView } from '@/components/body-map';
 import { Button, Card, Disclaimer, Field, Row, Screen, Segmented, T, TestBanner } from '@/components/ui';
 import { Colors, Radius, SeverityColors, Spacing } from '@/constants/theme';
 import { relayConfigured } from '@/lib/alerts';
-import { useIsTestCrash } from '@/lib/flow';
+import { callEmergencyNumber, useIsTestCrash } from '@/lib/flow';
 import { BODY_PART_LABELS, SEVERITY_INFO, highestSeverity, outcomeFor } from '@/lib/injury';
 import { backgroundCapable, rideSession } from '@/lib/ride-session';
 import { actions, getState, newId, useApp } from '@/lib/store';
@@ -24,6 +24,7 @@ export default function CheckIn() {
   const [notes, setNotes] = useState<Partial<Record<BodyPart, string>>>({});
   const [saving, setSaving] = useState(false);
   const isTest = useIsTestCrash(crashId);
+  const emergencyNumber = useApp((s) => s.settings.emergencyNumber);
 
   const parts = Object.keys(selected) as BodyPart[];
   const allRated = parts.length > 0 && parts.every((p) => selected[p]);
@@ -75,6 +76,12 @@ export default function CheckIn() {
   return (
     <Screen edges={['bottom', 'left', 'right']}>
       <Stack.Screen options={{ title: step === 'map' ? 'Where does it hurt?' : 'How bad is it?' }} />
+      <Button
+        label={`Call ${emergencyNumber} now`}
+        icon="call"
+        variant="danger"
+        onPress={() => callEmergencyNumber(emergencyNumber, isTest)}
+      />
       {isTest && <TestBanner />}
 
       {auto === '1' && (
