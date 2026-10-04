@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ComponentProps, ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -14,10 +14,21 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
+import Svg, { Defs, Path, Pattern, Rect } from 'react-native-svg';
 
-import { Colors, Radius, Spacing } from '@/constants/theme';
+import { Colors, Fonts, Radius, SeverityColors, Spacing } from '@/constants/theme';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
+type MciName = ComponentProps<typeof MaterialCommunityIcons>['name'];
+/** An Ionicons name, or `mci:<name>` for MaterialCommunityIcons (which has the motorbike glyphs). */
+export type AppIconName = IconName | `mci:${MciName}`;
+
+export function AppIcon({ name, size, color }: { name: AppIconName; size: number; color: string }) {
+  if (name.startsWith('mci:')) {
+    return <MaterialCommunityIcons name={name.slice(4) as MciName} size={size} color={color} />;
+  }
+  return <Ionicons name={name as IconName} size={size} color={color} />;
+}
 
 export function Screen({
   children,
@@ -65,11 +76,49 @@ export const T = {
   Label: ({ children, style }: TextProps) => <Text style={[styles.label, style]}>{children}</Text>,
 };
 
-type ButtonVariant = 'primary' | 'danger' | 'ok' | 'secondary' | 'ghost';
+/** Section heading with an orange tick, like a marking on a gauge. */
+export function Section({ children, color = Colors.accent }: { children: ReactNode; color?: string }) {
+  return (
+    <Row gap={Spacing.sm} style={{ marginTop: Spacing.xs }}>
+      <View style={[styles.sectionTick, { backgroundColor: color }]} />
+      <Text style={styles.section}>{children}</Text>
+    </Row>
+  );
+}
+
+/** Diagonal hazard stripes (road-works tape), for alert headers and warning cards. */
+export function HazardStripes({
+  color = Colors.accent,
+  height = 8,
+  style,
+}: {
+  color?: string;
+  height?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const id = `hz-${color.replace('#', '')}`;
+  return (
+    <View style={[{ height, overflow: 'hidden', borderRadius: 2 }, style]}>
+      <Svg width="100%" height={height}>
+        <Defs>
+          <Pattern id={id} width={16} height={16} patternUnits="userSpaceOnUse">
+            <Rect width={16} height={16} fill={Colors.bg} />
+            <Path d="M0 16 L8 0 L16 0 L8 16 Z" fill={color} />
+          </Pattern>
+        </Defs>
+        <Rect width="100%" height={height} fill={`url(#${id})`} />
+      </Svg>
+    </View>
+  );
+}
+
+type ButtonVariant = 'primary' | 'danger' | 'warning' | 'ok' | 'secondary' | 'ghost';
 
 const BUTTON_COLORS: Record<ButtonVariant, { bg: string; fg: string; border?: string }> = {
-  primary: { bg: Colors.accent, fg: '#140A02' },
+  primary: { bg: Colors.accent, fg: Colors.onAccent },
   danger: { bg: Colors.danger, fg: '#FFFFFF' },
+  /** Yellow, the "get to a hospital" colour (matches the moderate-injury severity). */
+  warning: { bg: SeverityColors.moderate, fg: '#1A1400' },
   ok: { bg: Colors.ok, fg: '#04140A' },
   secondary: { bg: Colors.surfaceRaised, fg: Colors.text, border: Colors.border },
   ghost: { bg: 'transparent', fg: Colors.textDim },
@@ -95,8 +144,8 @@ export function Button({
   style?: StyleProp<ViewStyle>;
 }) {
   const c = BUTTON_COLORS[variant];
-  const height = size === 'xl' ? 88 : size === 'lg' ? 64 : 50;
-  const fontSize = size === 'xl' ? 24 : size === 'lg' ? 19 : 16;
+  const height = size === 'xl' ? 88 : size === 'lg' ? 64 : 52;
+  const fontSize = size === 'xl' ? 30 : size === 'lg' ? 23 : 19;
   return (
     <Pressable
       accessibilityRole="button"
@@ -120,7 +169,7 @@ export function Button({
         <ActivityIndicator color={c.fg} />
       ) : (
         <>
-          {icon && <Ionicons name={icon} size={fontSize + 4} color={c.fg} />}
+          {icon && <Ionicons name={icon} size={fontSize} color={c.fg} />}
           <Text style={[styles.buttonText, { color: c.fg, fontSize }]}>{label}</Text>
         </>
       )}
@@ -161,11 +210,13 @@ export function Row({
   return <View style={[{ flexDirection: 'row', alignItems: 'center', gap }, style]}>{children}</View>;
 }
 
+/** A readout on the dash: small label, big italic number. */
 export function Stat({ label, value, unit }: { label: string; value: string; unit?: string }) {
   return (
-    <View style={{ flex: 1 }}>
+    // Top-aligned so a readout with a unit lines up with its neighbours in a centred Row.
+    <View style={{ flex: 1, alignSelf: 'flex-start' }}>
       <T.Label>{label}</T.Label>
-      <Text style={styles.statValue}>
+      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>
         {value}
         {unit ? <Text style={styles.statUnit}> {unit}</Text> : null}
       </Text>
@@ -212,7 +263,7 @@ export function Segmented<V extends string | number>({
             accessibilityState={{ selected }}
             onPress={() => onChange(o.value)}
             style={[styles.segment, selected && { backgroundColor: Colors.accent }]}>
-            <Text style={[styles.segmentText, selected && { color: '#140A02' }]}>{o.label}</Text>
+            <Text style={[styles.segmentText, selected && { color: Colors.onAccent }]}>{o.label}</Text>
           </Pressable>
         );
       })}
@@ -261,7 +312,7 @@ export function ListItem({
   right,
   onPress,
 }: {
-  icon?: IconName;
+  icon?: AppIconName;
   iconColor?: string;
   title: string;
   subtitle?: string;
@@ -269,11 +320,11 @@ export function ListItem({
   onPress?: () => void;
 }) {
   return (
-    <Card onPress={onPress} style={{ paddingVertical: Spacing.md }}>
+    <Card onPress={onPress} style={{ paddingVertical: Spacing.md, borderLeftWidth: 3, borderLeftColor: iconColor }}>
       <Row gap={Spacing.md}>
         {icon && (
           <View style={styles.listIcon}>
-            <Ionicons name={icon} size={20} color={iconColor} />
+            <AppIcon name={icon} size={22} color={iconColor} />
           </View>
         )}
         <View style={{ flex: 1 }}>
@@ -291,17 +342,31 @@ export function ListItem({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: Colors.bg },
   screenContent: { padding: Spacing.lg, gap: Spacing.lg, paddingBottom: Spacing.xxl },
-  title: { color: Colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
-  h2: { color: Colors.text, fontSize: 18, fontWeight: '700' },
+  title: {
+    color: Colors.text,
+    fontFamily: Fonts.display,
+    fontSize: 40,
+    lineHeight: 42,
+    textTransform: 'uppercase',
+  },
+  h2: { color: Colors.text, fontFamily: Fonts.displayBold, fontSize: 23, lineHeight: 26, textTransform: 'uppercase' },
   body: { color: Colors.text, fontSize: 16, lineHeight: 22 },
   dim: { color: Colors.textDim, fontSize: 14, lineHeight: 20 },
   label: {
     color: Colors.textDim,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.8,
+    fontFamily: Fonts.label,
+    fontSize: 14,
+    letterSpacing: 1.6,
     textTransform: 'uppercase',
   },
+  section: {
+    color: Colors.text,
+    fontFamily: Fonts.displayBold,
+    fontSize: 18,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  sectionTick: { width: 14, height: 4, borderRadius: 1, transform: [{ skewX: '-20deg' }] },
   button: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -311,7 +376,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     borderWidth: 1,
   },
-  buttonText: { fontWeight: '800' },
+  buttonText: { fontFamily: Fonts.displayBold, textTransform: 'uppercase', letterSpacing: 0.6 },
   card: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.lg,
@@ -320,8 +385,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     gap: Spacing.sm,
   },
-  statValue: { color: Colors.text, fontSize: 24, fontWeight: '800', marginTop: 2 },
-  statUnit: { color: Colors.textDim, fontSize: 13, fontWeight: '600' },
+  statValue: { color: Colors.text, fontFamily: Fonts.display, fontSize: 36, lineHeight: 40, marginTop: 2 },
+  statUnit: { color: Colors.textDim, fontFamily: Fonts.label, fontSize: 15 },
   input: {
     backgroundColor: Colors.surfaceRaised,
     borderColor: Colors.border,
@@ -345,7 +410,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 2,
     borderRadius: Radius.sm,
   },
-  segmentText: { color: Colors.text, fontWeight: '700', fontSize: 14 },
+  segmentText: { color: Colors.text, fontFamily: Fonts.displayBold, fontSize: 18, textTransform: 'uppercase' },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -356,7 +421,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     alignSelf: 'flex-start',
   },
-  badgeText: { fontSize: 12, fontWeight: '700' },
+  badgeText: { fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.8, textTransform: 'uppercase' },
   disclaimer: {
     alignItems: 'flex-start',
     padding: Spacing.md,
@@ -373,9 +438,9 @@ const styles = StyleSheet.create({
   },
   testBannerText: { flex: 1, color: Colors.text, fontSize: 13, fontWeight: '600', lineHeight: 18 },
   listIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: Radius.md,
     backgroundColor: Colors.surfaceRaised,
     alignItems: 'center',
     justifyContent: 'center',

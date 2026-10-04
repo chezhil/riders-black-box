@@ -36,6 +36,10 @@ export type NativeSnapshot = {
   liveG: number;
   /** Crash detection is armed (rider moved recently, or motion gating is off). */
   armed: boolean;
+  /** Detection is paused because a crash is being handled. */
+  suspended: boolean;
+  /** No accelerometer: the route is logged but crashes can't be detected. */
+  noSensors: boolean;
   pointCount: number;
   lastPoint: NativePoint | null;
   hardBrakes: NativeHardBrake[];
@@ -94,6 +98,8 @@ type Events = {
 
 type RideMonitorNative = {
   start(options: StartOptions): Promise<void>;
+  /** Swap contacts / profile / alert settings of the running ride (detector settings are kept). */
+  updateConfig(options: StartOptions): void;
   stop(): Promise<(NativeSnapshot & { route: NativePoint[]; endTime: number }) | null>;
   isRunning(): boolean;
   getSnapshot(): NativeSnapshot | null;
@@ -101,8 +107,11 @@ type RideMonitorNative = {
   getCrash(): NativeCrash | null;
   simulateCrash(): void;
   resolveCrash(outcome: 'fine' | 'help'): void;
+  /** Re-arm detection after a crash flow. Ignored while a countdown is still running. */
   resumeDetection(): void;
   stopEmergency(): void;
+  /** The rider touched the app: a jolt around now is handling, not a crash. */
+  noteInteraction(): void;
   /** Ring a non-emergency number directly (CALL_PHONE). False if not permitted. */
   placeCall(phone: string): boolean;
   stopSiren(): void;
@@ -115,6 +124,11 @@ type RideMonitorNative = {
   };
   openFullScreenIntentSettings(): void;
   requestIgnoreBatteryOptimizations(): void;
+  /** Let the current screen show over the lock screen (ride dash, crash / help screens). */
+  setShowWhenLocked(on: boolean): Promise<void>;
+  isDeviceLocked(): boolean;
+  /** Ask for PIN / fingerprint. True once unlocked (or if it wasn't locked). */
+  requestUnlock(): Promise<boolean>;
   addListener<E extends keyof Events>(event: E, listener: Events[E]): EventSubscription;
 };
 

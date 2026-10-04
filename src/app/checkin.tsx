@@ -6,7 +6,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { BodyMap, type BodyView } from '@/components/body-map';
 import { EmergencyActions } from '@/components/emergency-actions';
 import { Button, Card, Disclaimer, Field, Row, Screen, Segmented, T, TestBanner } from '@/components/ui';
-import { Colors, Radius, SeverityColors, Spacing } from '@/constants/theme';
+import { Colors, Fonts, Radius, SeverityColors, Spacing } from '@/constants/theme';
 import { relayConfigured } from '@/lib/alerts';
 import { endIncident, useIsTestCrash } from '@/lib/flow';
 import { BODY_PART_LABELS, SEVERITY_INFO, highestSeverity, outcomeFor } from '@/lib/injury';
@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  chipText: { color: Colors.text, fontWeight: '600' },
+  chipText: { color: Colors.text, fontFamily: Fonts.heading, fontSize: 15, letterSpacing: 0.5, textTransform: 'uppercase' },
   sevOption: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -209,5 +209,5 @@ const styles = StyleSheet.create({
     minHeight: 64,
   },
   sevDot: { width: 16, height: 16, borderRadius: 8 },
-  sevLabel: { color: Colors.text, fontSize: 17, fontWeight: '800' },
+  sevLabel: { color: Colors.text, fontFamily: Fonts.displayBold, fontSize: 22, textTransform: 'uppercase' },
 });

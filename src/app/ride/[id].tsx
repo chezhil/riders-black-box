@@ -1,8 +1,8 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Alert } from 'react-native';
 
-import { RouteMap } from '@/components/route-map';
-import { Button, Card, ListItem, Row, Screen, Stat, T } from '@/components/ui';
+import { MapColors, MapLegend, RouteMap } from '@/components/route-map';
+import { Button, Card, ListItem, Row, Screen, Section, Stat, T } from '@/components/ui';
 import { Colors, SeverityColors, Spacing } from '@/constants/theme';
 import { formatDateTime, formatDistance, formatDuration, formatTime, toKmh } from '@/lib/geo';
 import { BODY_PART_LABELS, OUTCOME_LABELS, SEVERITY_INFO, highestSeverity } from '@/lib/injury';
@@ -41,10 +41,20 @@ export default function RideDetail() {
         points={ride.routePoints}
         height={260}
         markers={[
-          ...ride.hardBrakeEvents.map((b) => ({ ...b, color: SeverityColors.moderate })),
-          ...crashes.filter((c) => c.location).map((c) => ({ ...c.location!, color: Colors.danger })),
+          ...ride.hardBrakeEvents.map((b) => ({ ...b, color: MapColors.hardBrake })),
+          ...crashes.filter((c) => c.location).map((c) => ({ ...c.location!, color: MapColors.crash })),
         ]}
       />
+      {ride.routePoints.length > 0 && (
+        <MapLegend
+          kinds={[
+            'start',
+            'end',
+            ...(ride.hardBrakeEvents.length ? (['hardBrake'] as const) : []),
+            ...(crashes.some((c) => c.location) ? (['crash'] as const) : []),
+          ]}
+        />
+      )}
       <Card>
         <Row gap={Spacing.lg}>
           <Stat label="Distance" value={formatDistance(ride.distanceM)} />
@@ -59,7 +69,7 @@ export default function RideDetail() {
         </T.Dim>
       </Card>
 
-      <T.Label>Hard braking ({ride.hardBrakeEvents.length})</T.Label>
+      <Section>Hard braking ({ride.hardBrakeEvents.length})</Section>
       {ride.hardBrakeEvents.length === 0 ? (
         <T.Dim>None. Smooth riding.</T.Dim>
       ) : (
@@ -67,14 +77,14 @@ export default function RideDetail() {
           <ListItem
             key={b.t}
             icon="speedometer"
-            iconColor={SeverityColors.moderate}
+            iconColor={MapColors.hardBrake}
             title={formatTime(b.t)}
             subtitle={`${(b.decel / 9.81).toFixed(2)} g deceleration`}
           />
         ))
       )}
 
-      {(crashes.length > 0 || reports.length > 0) && <T.Label>Incidents</T.Label>}
+      {(crashes.length > 0 || reports.length > 0) && <Section>Incidents</Section>}
       {crashes.map((c) => (
         <ListItem
           key={c.id}

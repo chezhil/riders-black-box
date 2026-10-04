@@ -12,10 +12,43 @@ import { useState } from 'react';
 import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, Polyline } from 'react-native-svg';
 
-import { Colors, Radius } from '@/constants/theme';
+import { Colors, Fonts, Radius, SeverityColors } from '@/constants/theme';
 import type { LatLng } from '@/lib/types';
 
-import { T } from './ui';
+import { Row, T } from './ui';
+
+/** Marker colours, shared by every map so the legend always means the same thing. */
+export const MapColors = {
+  start: Colors.ok,
+  /** Where a finished ride ended. */
+  end: Colors.accent,
+  /** Where the rider is now, on the live map (same dot as `end`). */
+  now: Colors.accent,
+  hardBrake: SeverityColors.moderate,
+  crash: Colors.danger,
+} as const;
+
+const LEGEND_LABELS: Record<keyof typeof MapColors, string> = {
+  start: 'Start',
+  end: 'End',
+  now: 'You',
+  hardBrake: 'Hard brake',
+  crash: 'Crash',
+};
+
+/** Key for the dots on a route map; pass the kinds that are actually on it. */
+export function MapLegend({ kinds }: { kinds: (keyof typeof MapColors)[] }) {
+  return (
+    <Row gap={14} style={{ flexWrap: 'wrap', marginTop: -4 }}>
+      {kinds.map((k) => (
+        <Row key={k} gap={6}>
+          <View style={[styles.legendDot, { backgroundColor: MapColors[k] }]} />
+          <Text style={styles.legendText}>{LEGEND_LABELS[k]}</Text>
+        </Row>
+      ))}
+    </Row>
+  );
+}
 
 const TILE = 256;
 const MIN_ZOOM = 3;
@@ -60,18 +93,19 @@ export function RouteMap({
   const [width, setWidth] = useState(0);
   const onLayout = (e: LayoutChangeEvent) => setWidth(Math.round(e.nativeEvent.layout.width));
 
-  if (points.length === 0) {
-    return (
-      <View style={[styles.box, styles.empty, { height }]}>
-        <T.Dim>Waiting for GPS…</T.Dim>
-      </View>
-    );
-  }
-
+  // One box with onLayout from the start: on a live ride the first GPS fix arrives after
+  // mount, and a size listener added later never fires, which left the map blank.
+  const empty = points.length === 0;
   return (
-    <View style={[styles.box, { height }]} onLayout={onLayout}>
-      {width > 0 && <MapContent points={points} markers={markers} width={width} height={height} />}
-      <Text style={styles.attribution}>Tiles © Esri · © OpenStreetMap contributors</Text>
+    <View style={[styles.box, empty && styles.empty, { height }]} onLayout={onLayout}>
+      {empty ? (
+        <T.Dim>Waiting for GPS…</T.Dim>
+      ) : (
+        <>
+          {width > 0 && <MapContent points={points} markers={markers} width={width} height={height} />}
+          <Text style={styles.attribution}>Tiles © Esri · © OpenStreetMap contributors</Text>
+        </>
+      )}
     </View>
   );
 }
@@ -148,7 +182,7 @@ function MapContent({
               strokeLinejoin="round"
               strokeLinecap="round"
             />
-            <Circle cx={start.x} cy={start.y} r={6} fill={Colors.ok} stroke="#000" strokeWidth={2} />
+            <Circle cx={start.x} cy={start.y} r={6} fill={MapColors.start} stroke="#000" strokeWidth={2} />
           </>
         )}
         {markers.map((m, i) => {
@@ -172,6 +206,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   empty: { alignItems: 'center', justifyContent: 'center' },
+  legendDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: '#000' },
+  legendText: { color: Colors.textDim, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1, textTransform: 'uppercase' },
   attribution: {
     position: 'absolute',
     right: 6,

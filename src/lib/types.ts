@@ -69,6 +69,8 @@ export type CrashEvent = {
   notifyChannel: NotifyChannel;
   /** "I'm OK" follow-up already texted to contacts. */
   allClearSent?: boolean;
+  /** The Emergency screen already auto-sent its SEVERE alert for this incident. */
+  severeAlertSent?: boolean;
 };
 
 export type Severity = 'minor' | 'moderate' | 'severe';
@@ -110,6 +112,8 @@ export type InjuryReport = {
   contactsNotified: boolean;
   /** "I'm OK" follow-up already texted to contacts. */
   allClearSent?: boolean;
+  /** The Emergency screen already auto-sent its SEVERE alert for this incident. */
+  severeAlertSent?: boolean;
   /** Came from a simulated (demo) crash: never call 112 or hospitals. */
   test?: boolean;
 };

@@ -1,29 +1,47 @@
 /**
- * Rider's Black Box uses a single high-contrast dark theme: it has to be
- * readable in direct sunlight, at night, and by someone who is shaken up.
+ * Rider's Black Box uses a single high-contrast dark theme styled like a
+ * motorcycle instrument cluster: asphalt black, hi-vis orange, italic
+ * condensed numerals. It has to be readable in direct sunlight, at night, with
+ * gloves on, and by someone who is shaken up.
  */
 
 export const Colors = {
-  bg: '#0B0D10',
-  surface: '#15181D',
-  surfaceRaised: '#1E232A',
-  border: '#2A3038',
-  text: '#F2F4F7',
-  textDim: '#9AA3AF',
-  textFaint: '#6B7480',
-  accent: '#FF7A1A',
-  accentDim: '#3A2414',
-  danger: '#EF4444',
-  dangerDim: '#3B1517',
-  ok: '#22C55E',
-  okDim: '#12301D',
-  info: '#38BDF8',
+  bg: '#09090B',
+  surface: '#131316',
+  surfaceRaised: '#1D1D22',
+  border: '#2B2B32',
+  text: '#F5F5F4',
+  textDim: '#A1A1AA',
+  textFaint: '#6B6B75',
+  /** Hi-vis orange, like a safety vest or a tacho needle. */
+  accent: '#FF6B00',
+  accentDim: '#361905',
+  /** Text on an accent background. */
+  onAccent: '#140800',
+  danger: '#FF3B30',
+  dangerDim: '#3A0F0C',
+  ok: '#39E07A',
+  okDim: '#0F2C1A',
+  info: '#3BC7FF',
 } as const;
 
 export const SeverityColors = {
-  minor: '#22C55E',
-  moderate: '#FACC15',
-  severe: '#EF4444',
+  minor: '#39E07A',
+  moderate: '#FFC400',
+  severe: '#FF3B30',
+} as const;
+
+/**
+ * Barlow Condensed, loaded in the root layout. Set `fontFamily` only: adding
+ * `fontWeight` to a custom face makes Android fall back to a synthetic weight.
+ */
+export const Fonts = {
+  /** Big italic numerals and titles: speed, countdown, screen titles. */
+  display: 'BarlowCondensed_900Black_Italic',
+  /** Buttons and emphasised headings. */
+  displayBold: 'BarlowCondensed_800ExtraBold_Italic',
+  heading: 'BarlowCondensed_700Bold',
+  label: 'BarlowCondensed_600SemiBold',
 } as const;
 
 export const Spacing = {
@@ -36,8 +54,8 @@ export const Spacing = {
 } as const;
 
 export const Radius = {
-  sm: 8,
-  md: 12,
-  lg: 18,
+  sm: 6,
+  md: 10,
+  lg: 14,
   pill: 999,
 } as const;

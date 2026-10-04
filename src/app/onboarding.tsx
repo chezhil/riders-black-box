@@ -4,12 +4,19 @@ import { useState } from 'react';
 import { View } from 'react-native';
 
 import { ContactsEditor, MedicalEditor } from '@/components/contacts-editor';
-import { Button, Card, Field, Row, Screen, T } from '@/components/ui';
+import { AppIcon, Button, Card, Field, HazardStripes, Row, Screen, T, type AppIconName } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
 import { rideSession } from '@/lib/ride-session';
 import { actions, useApp } from '@/lib/store';
 
 const STEPS = ['you', 'contacts', 'medical', 'permissions'] as const;
+
+/** What the app does, in three lines, for the first screen. */
+const FEATURES: { icon: AppIconName; title: string; body: string }[] = [
+  { icon: 'mci:motorbike', title: 'Detects a crash', body: 'Hard impact, then stillness: the pattern of a fall.' },
+  { icon: 'chatbubbles', title: 'Alerts your people', body: "If you don't answer, they get your location." },
+  { icon: 'mci:hospital-box', title: 'Finds help nearby', body: 'First aid, the nearest hospital, or 112.' },
+];
 type Step = (typeof STEPS)[number];
 
 const PERMISSIONS = [
@@ -51,6 +58,9 @@ export default function Onboarding() {
     setGranting(true);
     try {
       await rideSession.requestPermissions();
+    } catch (e) {
+      // Permissions can be granted later from Settings; don't strand the rider here.
+      console.warn('Permission request failed', e);
     } finally {
       setGranting(false);
     }
@@ -77,13 +87,24 @@ export default function Onboarding() {
       {step === 'you' && (
         <>
           <View style={{ gap: Spacing.sm, marginTop: Spacing.lg }}>
-            <Ionicons name="shield-checkmark" size={48} color={Colors.accent} />
+            <AppIcon name="mci:shield-car" size={52} color={Colors.accent} />
             <T.Title>Rider&apos;s Black Box</T.Title>
-            <T.Dim>
-              Detects a crash, checks whether you&apos;re OK, and if you don&apos;t answer, sends your location to
-              the people you choose. Then it helps you find the right kind of help.
-            </T.Dim>
+            <HazardStripes height={6} style={{ width: 96 }} />
+            <T.Dim>A crash co-pilot for two-wheeler riders. Set it up once, then just tap Start before you ride.</T.Dim>
           </View>
+          <Card style={{ gap: Spacing.md }}>
+            {FEATURES.map((f) => (
+              <Row key={f.title} gap={Spacing.md} style={{ alignItems: 'flex-start' }}>
+                <View style={{ width: 28, alignItems: 'center', paddingTop: 2 }}>
+                  <AppIcon name={f.icon} size={22} color={Colors.accent} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <T.H2 style={{ fontSize: 19 }}>{f.title}</T.H2>
+                  <T.Dim>{f.body}</T.Dim>
+                </View>
+              </Row>
+            ))}
+          </Card>
           <Field
             label="Your name"
             value={profile.name}

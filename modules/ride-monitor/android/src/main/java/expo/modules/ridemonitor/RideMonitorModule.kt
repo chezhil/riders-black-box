@@ -1,5 +1,7 @@
 package expo.modules.ridemonitor
 
+import android.app.Activity
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -7,7 +9,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.WindowManager
 import androidx.core.content.ContextCompat
+import expo.modules.kotlin.Promise
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
@@ -42,6 +47,28 @@ class StartOptions : Record {
   @Field val followUps: Boolean = true
 }
 
+private fun StartOptions.toRideConfig(): RideConfig {
+  val d = detector
+  return RideConfig(
+    rideId = rideId,
+    detector = DetectorConfig(
+      d.impactG, d.settleMs.toLong(), d.stillMs.toLong(), d.stillStdG, d.stillGyro, d.orientationDeg,
+      d.requireMotion, d.minSpeedMps, d.handlingPeakG, d.handlingPeaks,
+    ),
+    countdownSeconds = countdownSeconds,
+    contactPhones = contactPhones,
+    alertTemplate = alertTemplate,
+    autoSms = autoSms,
+    riderName = riderName,
+    medicalSummary = medicalSummary,
+    contactNames = contactNames,
+    autoCall = autoCall,
+    siren = siren,
+    emergencyNumber = emergencyNumber,
+    followUps = followUps,
+  )
+}
+
 class RideMonitorModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw IllegalStateException("React context unavailable")
@@ -67,27 +94,13 @@ class RideMonitorModule : Module() {
     }
 
     AsyncFunction("start") { options: StartOptions ->
-      val d = options.detector
-      RideMonitorService.pendingConfig = RideConfig(
-        rideId = options.rideId,
-        detector = DetectorConfig(
-          d.impactG, d.settleMs.toLong(), d.stillMs.toLong(), d.stillStdG, d.stillGyro, d.orientationDeg,
-          d.requireMotion, d.minSpeedMps, d.handlingPeakG, d.handlingPeaks,
-        ),
-        countdownSeconds = options.countdownSeconds,
-        contactPhones = options.contactPhones,
-        alertTemplate = options.alertTemplate,
-        autoSms = options.autoSms,
-        riderName = options.riderName,
-        medicalSummary = options.medicalSummary,
-        contactNames = options.contactNames,
-        autoCall = options.autoCall,
-        siren = options.siren,
-        emergencyNumber = options.emergencyNumber,
-        followUps = options.followUps,
-      )
+      RideMonitorService.pendingConfig = options.toRideConfig()
       val intent = Intent(context, RideMonitorService::class.java).setAction(RideMonitorService.ACTION_START)
       ContextCompat.startForegroundService(context, intent)
+    }
+
+    Function("updateConfig") { options: StartOptions ->
+      RideMonitor.service?.updateConfig(options.toRideConfig())
     }
 
     AsyncFunction("stop") {
@@ -114,6 +127,9 @@ class RideMonitorModule : Module() {
     Function("resolveCrash") { outcome: String -> RideMonitor.service?.resolveCrash(outcome) }
 
     Function("resumeDetection") { RideMonitor.service?.resumeDetection() }
+
+    /** The rider touched the app: a jolt around now is handling, not a crash. */
+    Function("noteInteraction") { RideMonitor.service?.noteInteraction() }
 
     /** Help has arrived / rider is OK: stop the siren, auto-calls and follow-up texts. */
     Function("stopEmergency") { RideMonitor.service?.stopEmergency() }
@@ -149,9 +165,50 @@ class RideMonitorModule : Module() {
     /** Ring a (non-emergency) number directly. False if not allowed; the caller then opens the dialer. */
     Function("placeCall") { phone: String -> CallPlacer.place(context, phone) }
 
+    // ---- Lock-screen ride dash ------------------------------------------------
+
+    /**
+     * Let the app's current screen show over the lock screen (the ride dash and
+     * the crash / help screens), or stop doing so. JS decides per route.
+     */
+    AsyncFunction("setShowWhenLocked") { on: Boolean ->
+      val activity = appContext.currentActivity ?: return@AsyncFunction
+      setShowWhenLocked(activity, on)
+    }.runOnQueue(Queues.MAIN)
+
+    Function("isDeviceLocked") {
+      (context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
+    }
+
+    /** Ask the rider to unlock (PIN / fingerprint). Resolves true once unlocked, false if cancelled. */
+    AsyncFunction("requestUnlock") { promise: Promise ->
+      val activity = appContext.currentActivity
+      val km = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+      if (!km.isKeyguardLocked) return@AsyncFunction promise.resolve(true)
+      if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return@AsyncFunction promise.resolve(false)
+      km.requestDismissKeyguard(
+        activity,
+        object : KeyguardManager.KeyguardDismissCallback() {
+          override fun onDismissSucceeded() = promise.resolve(true)
+          override fun onDismissCancelled() = promise.resolve(false)
+          override fun onDismissError() = promise.resolve(false)
+        },
+      )
+    }.runOnQueue(Queues.MAIN)
+
     Function("requestIgnoreBatteryOptimizations") {
       val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
       context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
+  }
+}
+
+private fun setShowWhenLocked(activity: Activity, on: Boolean) {
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+    activity.setShowWhenLocked(on)
+  } else {
+    @Suppress("DEPRECATION")
+    if (on) activity.window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
+    else activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
   }
 }

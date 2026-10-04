@@ -11,10 +11,13 @@ import kotlin.math.sqrt
  * app is in the background (behind Google Maps, screen off).
  * Keep the two in sync; scripts/simulate-detector.mts exercises the TS version.
  *
- * Only ARMED while GPS says the rider moved >= minSpeedMps in the last 30 s.
- * NOT HANDLING (no burst of jolts just before) -> IMPACT (|a| >= impactG) ->
- * SETTLE (ignore tumble) -> STILLNESS (low variance, low rotation) ->
- * ORIENTATION change. Motion resuming = "bump", not a crash.
+ * Only ARMED while GPS says the rider moved >= minSpeedMps in the last 30 s
+ * and hasn't stopped since (below ~5 km/h for 4 s).
+ * NOT HANDLING (no burst of jolts just before, nobody unlocked the phone) ->
+ * IMPACT (|a| >= impactG) -> SETTLE (ignore tumble) -> STILLNESS (low
+ * variance, low rotation) -> ORIENTATION change -> STOPPED (a GPS reading 3 s+
+ * after the impact shows the rider no longer riding; none within ~2.5 s of the
+ * stillness window: alert anyway). Motion resuming = "bump", not a crash.
  */
 data class DetectorConfig(
   val impactG: Double,
@@ -48,7 +51,16 @@ class CrashDetector(var config: DetectorConfig) {
   private val window = ArrayList<Sample>()
   private val gyroWindow = ArrayList<Double>()
   private var lastMovingAt = Long.MIN_VALUE / 2
+  /** Start of the current run of slow GPS readings, or null while moving. */
+  private var slowSince: Long? = null
+  private var lastInteractionAt = Long.MIN_VALUE / 2
   private var lastIgnoredAt = Long.MIN_VALUE / 2
+  /** A GPS reading came in late enough after the impact to judge it… */
+  private var speedSeenAfterImpact = false
+  /** …and it showed the rider still riding. */
+  private var movedAfterImpact = false
+  /** Looked like a crash; waiting for that GPS reading before alerting. Holds the orientation change. */
+  private var pendingChange: Double? = null
 
   fun reset() {
     history.clear()
@@ -62,14 +74,35 @@ class CrashDetector(var config: DetectorConfig) {
     gyroWindow.clear()
     preGravity = null
     peakG = 0.0
+    speedSeenAfterImpact = false
+    movedAfterImpact = false
+    pendingChange = null
   }
 
   /** Feed GPS speed (m/s) so the detector knows whether the rider is riding. */
   fun pushSpeed(t: Long, speedMps: Double?) {
-    if (speedMps != null && speedMps >= config.minSpeedMps) lastMovingAt = t
+    if (speedMps == null) return // no speed in this fix: tells us nothing
+    if (inImpact && t >= impactAt + SPEED_CHECK_AFTER_MS) {
+      speedSeenAfterImpact = true
+      if (speedMps >= config.minSpeedMps) movedAfterImpact = true
+    }
+    if (speedMps >= config.minSpeedMps) lastMovingAt = t
+    if (speedMps < STOP_SPEED_MPS) { if (slowSince == null) slowSince = t } else slowSince = null
   }
 
-  fun isArmed(t: Long) = !config.requireMotion || t - lastMovingAt <= MOTION_WINDOW_MS
+  /** The rider has come to a stop (slow GPS readings for a few seconds). */
+  fun isStopped(t: Long) = slowSince?.let { t - it >= STOPPED_MS } ?: false
+
+  fun isArmed(t: Long) = !config.requireMotion || (t - lastMovingAt <= MOTION_WINDOW_MS && !isStopped(t))
+
+  /**
+   * The rider unlocked or touched the phone: a spike around now is them handling it
+   * (e.g. taking it out of a pocket), not a crash. Ends an impact being evaluated.
+   */
+  fun noteInteraction(t: Long): DetectorEvent? {
+    lastInteractionAt = t
+    return if (inImpact) finishAsBump("handling") else null
+  }
 
   fun pushGyro(t: Long, x: Double, y: Double, z: Double) {
     if (!inImpact) return
@@ -87,7 +120,9 @@ class CrashDetector(var config: DetectorConfig) {
     if (!inImpact) {
       if (g >= c.impactG) {
         if (!isArmed(t)) return ignore(t, g, "not_moving")
-        if (countPeaks(t, c.handlingPeakG) >= c.handlingPeaks) return ignore(t, g, "handling")
+        if (t - lastInteractionAt < INTERACTION_MS || countPeaks(t, c.handlingPeakG) >= c.handlingPeaks) {
+          return ignore(t, g, "handling")
+        }
         inImpact = true
         impactAt = t
         peakG = g
@@ -97,6 +132,10 @@ class CrashDetector(var config: DetectorConfig) {
       }
       return null
     }
+
+    // GPS says the rider is still riding along: a pothole or the phone shifting in a pocket.
+    if (movedAfterImpact) return finishAsBump("moving_again")
+    if (pendingChange != null) return confirmCrash(t)
 
     val stillStart = impactAt + c.settleMs
     val stillEnd = stillStart + c.stillMs
@@ -124,11 +163,23 @@ class CrashDetector(var config: DetectorConfig) {
     val change = if (pre != null && post != null) angleDeg(pre, post) else 90.0
     val veryHard = peakG >= c.impactG * 2
     if (change >= c.orientationDeg || veryHard) {
-      val event = DetectorEvent.Crash(impactAt, round1(peakG), change.toInt())
-      backToIdle()
-      return event
+      pendingChange = change
+      return confirmCrash(t)
     }
     return finishAsBump("no_fall")
+  }
+
+  /**
+   * It looked like a crash; alert once GPS confirms the rider stopped. No GPS reading
+   * yet (weak signal, tunnel)? Wait briefly, then alert anyway: missing a crash is worse.
+   */
+  private fun confirmCrash(t: Long): DetectorEvent? {
+    if (movedAfterImpact) return finishAsBump("moving_again")
+    val stillEnd = impactAt + config.settleMs + config.stillMs
+    if (config.requireMotion && !speedSeenAfterImpact && t < stillEnd + GPS_GRACE_MS) return null
+    val event = DetectorEvent.Crash(impactAt, round1(peakG), (pendingChange ?: 90.0).toInt())
+    backToIdle()
+    return event
   }
 
   private fun finishAsBump(reason: String): DetectorEvent {
@@ -161,6 +212,15 @@ class CrashDetector(var config: DetectorConfig) {
     private const val PRE_WINDOW_MS = 2000L
     private const val PRE_GUARD_MS = 250L
     private const val MOTION_WINDOW_MS = 30_000L
+    /** Below this GPS speed (≈5 km/h) for [STOPPED_MS] the rider counts as stopped. */
+    private const val STOP_SPEED_MPS = 1.5
+    private const val STOPPED_MS = 4000L
+    /** An impact this soon after the rider unlocked or touched the phone is them handling it. */
+    private const val INTERACTION_MS = 2000L
+    /** GPS readings from this long after an impact say whether the rider is still riding. */
+    private const val SPEED_CHECK_AFTER_MS = 3000L
+    /** How long past the stillness window to wait for that reading before alerting anyway. */
+    private const val GPS_GRACE_MS = 2500L
 
     private fun meanVec(samples: List<Sample>): DoubleArray? {
       if (samples.isEmpty()) return null

@@ -21,6 +21,8 @@ import type { LatLng, NotifyChannel } from './types';
 
 const RELAY_URL = process.env.EXPO_PUBLIC_ALERT_RELAY_URL;
 const RELAY_KEY = process.env.EXPO_PUBLIC_ALERT_RELAY_KEY;
+/** Give up on the relay after this long so a dead network falls back to the SIM quickly. */
+const RELAY_TIMEOUT_MS = 8000;
 
 export const relayConfigured = Boolean(RELAY_URL);
 
@@ -114,6 +116,8 @@ async function sendToContacts(
   if (phones.length === 0) return { channel: 'none', delivered: false, error: 'No emergency contacts saved' };
 
   if (RELAY_URL) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RELAY_TIMEOUT_MS);
     try {
       const res = await fetch(RELAY_URL.replace(/\/$/, '') + '/alert', {
         method: 'POST',
@@ -122,11 +126,14 @@ async function sendToContacts(
           ...(RELAY_KEY ? { Authorization: `Bearer ${RELAY_KEY}` } : {}),
         },
         body: JSON.stringify({ to: phones, body }),
+        signal: controller.signal,
       });
       if (res.ok) return { channel: 'relay', delivered: true };
       console.warn('Relay responded', res.status);
     } catch (e) {
       console.warn('Relay failed, falling back to SMS app', e);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -140,37 +147,53 @@ async function sendToContacts(
     return { channel: 'none', delivered: false, error: 'SMS relay unavailable' };
   }
 
-  if (!(await SMS.isAvailableAsync())) {
-    return { channel: 'none', delivered: false, error: 'SMS is not available on this device' };
+  try {
+    if (!(await SMS.isAvailableAsync())) {
+      return { channel: 'none', delivered: false, error: 'SMS is not available on this device' };
+    }
+    const { result } = await SMS.sendSMSAsync(phones, body);
+    // Android always reports "unknown"; treat the composer opening as best effort.
+    return { channel: 'sms_composer', delivered: result !== 'cancelled' };
+  } catch (e) {
+    return { channel: 'none', delivered: false, error: e instanceof Error ? e.message : String(e) };
   }
-  const { result } = await SMS.sendSMSAsync(phones, body);
-  // Android always reports "unknown"; treat the composer opening as best effort.
-  return { channel: 'sms_composer', delivered: result !== 'cancelled' };
 }
 
+const FOLLOW_UP_EVERY_MS = 3 * 60 * 1000;
+const MAX_FOLLOW_UPS = 5;
+
 let followUpTimer: ReturnType<typeof setInterval> | null = null;
+/** Bumped by every start/stop, so a stop during the async checks below wins. */
+let followUpGeneration = 0;
 
 /**
- * After an alert, keep contacts updated with the rider's latest position.
- * Only possible through the relay or the SIM: the composer would need a tap each time.
+ * After an alert, keep contacts updated with the rider's latest position
+ * (every 3 minutes, for 15 minutes). Only possible through the relay or the
+ * SIM: the composer would need a tap each time. Skipped while the native
+ * service is already sending its own follow-ups, so contacts don't get two series.
  */
-export function startLocationFollowUps(getLocation: () => Promise<LatLng | null>) {
+export async function startLocationFollowUps(getLocation: () => Promise<LatLng | null>) {
   stopLocationFollowUps();
-  if ((!RELAY_URL && !RideMonitor) || !getState().settings.liveLocation) return;
+  const generation = followUpGeneration;
+  if (!getState().settings.liveLocation) return;
+  if (RideMonitor?.getEmergency()?.active) return;
+  if (!RELAY_URL && !(RideMonitor && (await canSendFromSim()))) return;
+  if (generation !== followUpGeneration) return;
   let sent = 0;
   followUpTimer = setInterval(async () => {
     sent += 1;
-    if (sent > 5) return stopLocationFollowUps();
+    if (sent > MAX_FOLLOW_UPS) return stopLocationFollowUps();
     const loc = await getLocation();
     if (!loc) return;
     const name = getState().profile.name.trim() || 'Your contact';
     await sendToContacts(`📍 Location update for ${name} (${formatTime(Date.now())}): ${mapsLink(loc)}`, {
       allowComposer: false,
     });
-  }, 2 * 60 * 1000);
+  }, FOLLOW_UP_EVERY_MS);
 }
 
 export function stopLocationFollowUps() {
+  followUpGeneration += 1;
   if (followUpTimer) clearInterval(followUpTimer);
   followUpTimer = null;
 }
