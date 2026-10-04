@@ -1,12 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, View } from 'react-native';
 
 import { Badge, Button, Card, Disclaimer, Row, Screen, T, TestBanner } from '@/components/ui';
 import { Colors, SeverityColors, Spacing } from '@/constants/theme';
 import { notifyContacts } from '@/lib/alerts';
-import { callEmergencyNumber, finishIncident, useIsTest } from '@/lib/flow';
+import {
+  callEmergencyNumber,
+  finishIncident,
+  markIncidentNotified,
+  useEmergencyNumber,
+  useIsTest,
+} from '@/lib/flow';
 import { directionsLink, formatDistance } from '@/lib/geo';
 import { cachedNearby, findNearbyFacilities, type Facility } from '@/lib/hospitals';
 import { highestSeverity } from '@/lib/injury';
@@ -30,37 +36,40 @@ type LoadState =
 export default function Hospitals() {
   const { reportId, crashId } = useLocalSearchParams<{ reportId?: string; crashId?: string }>();
   const report = useApp((s) => s.reports.find((r) => r.id === reportId));
-  const emergencyNumber = useApp((s) => s.settings.emergencyNumber);
+  const crash = useApp((s) => s.crashes.find((c) => c.id === (crashId || report?.crashEventId)));
+  const emergencyNumber = useEmergencyNumber();
+  const navigation = useNavigation();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [notifying, setNotifying] = useState(false);
   const isTest = useIsTest({ reportId, crashId });
+  const mounted = useRef(true);
 
-  const reportLocation = report?.location ?? null;
+  // Opened straight from the crash flow there's no report yet: use where the crash happened.
+  const knownLocation = report?.location ?? crash?.location ?? null;
+  const contactsNotified = Boolean(report ? report.contactsNotified : crash?.contactsNotified);
 
   useEffect(() => {
-    let active = true;
-    lookup(reportLocation, (s) => active && setState(s));
+    mounted.current = true;
+    lookup(knownLocation, (s) => mounted.current && setState(s));
     return () => {
-      active = false;
+      mounted.current = false;
     };
-  }, [reportLocation]);
+  }, [knownLocation]);
 
   function retry() {
     setState({ status: 'loading' });
-    lookup(reportLocation, setState);
+    lookup(knownLocation, (s) => mounted.current && setState(s));
   }
 
   async function notify() {
-    if (!report) return;
     setNotifying(true);
-    const result = await notifyContacts(highestSeverity(report.affectedAreas), report.location, {
-      test: isTest,
-    });
+    const severity = report ? highestSeverity(report.affectedAreas) : 'unknown';
+    const result = await notifyContacts(severity, knownLocation, { test: isTest });
     setNotifying(false);
     if (result.skippedTest) {
       Alert.alert('Test: not sent', "This is a simulated crash, so your emergency contacts aren't texted.");
     } else if (result.delivered) {
-      actions.updateReport(report.id, { contactsNotified: true });
+      markIncidentNotified({ reportId, crashId }, { channel: result.channel });
     } else if (result.error) {
       Alert.alert("Couldn't notify contacts", result.error);
     }
@@ -69,7 +78,12 @@ export default function Hospitals() {
   /** Escalate: dial 112 right away, and open the Emergency screen (alerts contacts, shows location). */
   function callEmergency() {
     if (reportId) actions.updateReport(reportId, { outcomePath: 'emergency' });
-    router.replace({ pathname: '/outcome/emergency', params: { reportId: reportId ?? '', crashId: crashId ?? '' } });
+    // Came here from the Emergency screen: go back to it rather than stacking a second one.
+    const emergencyOpen = navigation.getState()?.routes.some((r) => r.name === 'outcome/emergency');
+    if (emergencyOpen) router.dismissTo('/outcome/emergency');
+    else {
+      router.replace({ pathname: '/outcome/emergency', params: { reportId: reportId ?? '', crashId: crashId ?? '' } });
+    }
     callEmergencyNumber(emergencyNumber, isTest);
   }
 
@@ -110,11 +124,11 @@ export default function Hospitals() {
       {isTest && <TestBanner />}
       <Row>
         <Button
-          label={report?.contactsNotified ? 'Contacts notified' : 'Notify contacts'}
-          icon={report?.contactsNotified ? 'checkmark' : 'chatbubbles'}
+          label={contactsNotified ? 'Contacts notified' : 'Notify contacts'}
+          icon={contactsNotified ? 'checkmark' : 'chatbubbles'}
           variant="secondary"
           style={{ flex: 1 }}
-          disabled={!report || report.contactsNotified}
+          disabled={contactsNotified}
           loading={notifying}
           onPress={notify}
         />

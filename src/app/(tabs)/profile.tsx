@@ -1,7 +1,7 @@
 import { Alert } from 'react-native';
 
 import { ContactsEditor, MedicalEditor } from '@/components/contacts-editor';
-import { Button, Card, Field, Screen, T } from '@/components/ui';
+import { Button, Card, Field, Screen, Section, T } from '@/components/ui';
 import { buildAlertMessage } from '@/lib/alerts';
 import { actions, useApp } from '@/lib/store';
 
@@ -14,10 +14,10 @@ export default function Profile() {
     <Screen>
       <T.Title>Contacts & profile</T.Title>
 
-      <T.Label>Emergency contacts</T.Label>
+      <Section>Emergency contacts</Section>
       <ContactsEditor />
 
-      <T.Label>You</T.Label>
+      <Section>You</Section>
       <Card>
         <Field label="Name" value={profile.name} onChangeText={(name) => actions.updateProfile({ name })} />
         <Field
@@ -28,7 +28,7 @@ export default function Profile() {
         />
       </Card>
 
-      <T.Label>Medical info card</T.Label>
+      <Section>Medical info card</Section>
       <Card>
         <MedicalEditor />
       </Card>

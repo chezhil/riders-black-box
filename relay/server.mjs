@@ -42,7 +42,12 @@ function readJson(req) {
     let data = '';
     req.on('data', (chunk) => {
       data += chunk;
-      if (data.length > 10_000) reject(new Error('Body too large'));
+      if (data.length > 10_000) {
+        reject(new Error('Body too large'));
+        // Stop reading instead of buffering the rest.
+        req.removeAllListeners('data');
+        req.resume();
+      }
     });
     req.on('end', () => {
       try {

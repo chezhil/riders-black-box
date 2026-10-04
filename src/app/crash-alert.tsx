@@ -6,8 +6,9 @@ import { BackHandler, Pressable, StyleSheet, Text, Vibration, View } from 'react
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 
-import { Colors, Spacing } from '@/constants/theme';
-import { notifyContacts, startLocationFollowUps } from '@/lib/alerts';
+import { HazardStripes } from '@/components/ui';
+import { Colors, Fonts, Spacing } from '@/constants/theme';
+import { notifyContacts, startLocationFollowUps, type NotifyResult } from '@/lib/alerts';
 import { useIsTestCrash } from '@/lib/flow';
 import { rideSession } from '@/lib/ride-session';
 import { actions, getState, useApp } from '@/lib/store';
@@ -18,8 +19,11 @@ export default function CrashAlert() {
   // When the native service owns the countdown, follow its deadline exactly.
   const nativeDeadline = deadlineParam ? Number(deadlineParam) : null;
   const [deadline] = useState(() => nativeDeadline ?? Date.now() + countdownSeconds * 1000);
-  const total = countdownSeconds;
-  const [left, setLeft] = useState(total);
+  const secondsLeft = () => Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  const [left, setLeft] = useState(secondsLeft);
+  // Reopened mid-countdown: the ring starts part-way. If the setting changed since the
+  // ride started, the native countdown can be longer than the current setting.
+  const [total] = useState(() => Math.max(countdownSeconds, left, 1));
   const done = useRef(false);
   const isTest = useIsTestCrash(crashId);
 
@@ -77,7 +81,9 @@ export default function CrashAlert() {
     const crash = getState().crashes.find((c) => c.id === crashId);
     (async () => {
       const location = crash?.location ?? (await rideSession.currentLocation());
-      const result = await notifyContacts('unresponsive', location, { test: isTest });
+      const result = await notifyContacts('unresponsive', location, { test: isTest }).catch(
+        (e): NotifyResult => ({ channel: 'none', delivered: false, error: String(e) }),
+      );
       actions.updateCrash(crashId, {
         location,
         contactsNotified: result.delivered,
@@ -89,7 +95,7 @@ export default function CrashAlert() {
 
   useEffect(() => {
     const id = setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      const remaining = secondsLeft();
       setLeft(remaining);
       if (remaining === 0) {
         clearInterval(id);
@@ -106,6 +112,7 @@ export default function CrashAlert() {
 
   return (
     <SafeAreaView style={styles.screen}>
+      <HazardStripes color={isTest ? Colors.info : Colors.danger} height={10} />
       <View style={styles.top}>
         {isTest ? (
           <Text style={styles.testTag}>TEST · SIMULATED CRASH</Text>
@@ -174,9 +181,9 @@ const styles = StyleSheet.create({
   top: { alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.lg },
   testTag: {
     color: Colors.info,
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 1.2,
+    fontFamily: Fonts.heading,
+    fontSize: 15,
+    letterSpacing: 1.4,
     borderWidth: 1,
     borderColor: Colors.info,
     borderRadius: 999,
@@ -184,12 +191,19 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     overflow: 'hidden',
   },
-  title: { color: Colors.text, fontSize: 40, fontWeight: '900', letterSpacing: -1 },
+  title: { color: Colors.text, fontFamily: Fonts.display, fontSize: 56, lineHeight: 58, textTransform: 'uppercase' },
   sub: { color: Colors.textDim, fontSize: 16, textAlign: 'center', lineHeight: 22 },
   ring: { alignItems: 'center', justifyContent: 'center' },
   ringCenter: { position: 'absolute', alignItems: 'center' },
-  count: { color: Colors.text, fontSize: 88, fontWeight: '900', letterSpacing: -3 },
-  countLabel: { color: Colors.textDim, fontSize: 14, fontWeight: '700', marginTop: -8 },
+  count: { color: Colors.text, fontFamily: Fonts.display, fontSize: 110, lineHeight: 116, fontVariant: ['tabular-nums'] },
+  countLabel: {
+    color: Colors.textDim,
+    fontFamily: Fonts.label,
+    fontSize: 16,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginTop: -10,
+  },
   actions: { gap: Spacing.md },
   fine: {
     backgroundColor: Colors.ok,
@@ -200,7 +214,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Spacing.md,
   },
-  fineText: { color: '#04140A', fontSize: 36, fontWeight: '900' },
+  fineText: { color: '#04140A', fontFamily: Fonts.display, fontSize: 48, textTransform: 'uppercase' },
   help: {
     borderRadius: 18,
     minHeight: 64,
@@ -211,5 +225,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Spacing.sm,
   },
-  helpText: { color: Colors.text, fontSize: 20, fontWeight: '800' },
+  helpText: { color: Colors.text, fontFamily: Fonts.displayBold, fontSize: 26, textTransform: 'uppercase' },
 });

@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { EmergencyActions } from '@/components/emergency-actions';
 import { Button, Card, Disclaimer, Row, Screen, T } from '@/components/ui';
-import { Colors, SeverityColors, Spacing } from '@/constants/theme';
+import { Colors, Fonts, SeverityColors, Spacing } from '@/constants/theme';
 import { finishIncident, useIsTestReport } from '@/lib/flow';
 import { BODY_PART_LABELS, ESCALATE_IF, firstAidCardsFor } from '@/lib/injury';
 import { actions, useApp } from '@/lib/store';
@@ -38,7 +38,7 @@ export default function FirstAid() {
           <T.H2>{card.title}</T.H2>
           {card.steps.map((step, i) => (
             <Row key={i} style={{ alignItems: 'flex-start' }}>
-              <T.Body style={{ color: Colors.accent, fontWeight: '800', width: 20 }}>{i + 1}</T.Body>
+              <Text style={styles.stepNo}>{i + 1}</Text>
               <T.Body style={{ flex: 1 }}>{step}</T.Body>
             </Row>
           ))}
@@ -64,3 +64,7 @@ export default function FirstAid() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  stepNo: { color: Colors.accent, fontFamily: Fonts.display, fontSize: 24, lineHeight: 24, width: 22 },
+});

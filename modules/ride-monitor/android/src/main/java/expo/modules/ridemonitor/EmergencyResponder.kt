@@ -33,8 +33,10 @@ import java.util.Locale
  *  1. SMS every emergency contact from the SIM; texts that fail (no signal)
  *     are retried every minute for 15 minutes.
  *  2. Follow-up location texts every 3 minutes for 15 minutes.
- *  3. Phone the contacts one by one on speakerphone. A call that ends within
- *     25 s was probably not answered, so the next contact is tried; a call
+ *  3. Phone the contacts one by one on speakerphone. Call state goes off-hook
+ *     as soon as dialling starts, so ringing counts too: a call that ends
+ *     within 45 s was probably not answered (or barely), so the next contact
+ *     is tried. Erring this way alerts one person too many, never too few. A call
  *     that never starts (no signal) is skipped after 15 s. If nobody picked
  *     up, the whole list is tried once more 2 minutes later.
  *  4. A loud siren (alarm stream, max volume) so people nearby notice; it
@@ -442,7 +444,7 @@ class EmergencyResponder(
     private const val MAX_SMS_ATTEMPTS = 15
     private const val FOLLOW_UP_EVERY_MS = 3 * 60_000L
     private const val MAX_FOLLOW_UPS = 5
-    private const val ANSWERED_MIN_MS = 25_000L
+    private const val ANSWERED_MIN_MS = 45_000L
     private const val CALL_TIMEOUT_MS = 120_000L
     private const val CALL_START_TIMEOUT_MS = 15_000L
     private const val CALL_ROUNDS = 2

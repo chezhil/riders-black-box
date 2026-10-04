@@ -1,8 +1,7 @@
 import { View } from 'react-native';
 
 import { Spacing } from '@/constants/theme';
-import { callEmergencyNumber, openNearbyHospitals } from '@/lib/flow';
-import { useApp } from '@/lib/store';
+import { callEmergencyNumber, openNearbyHospitals, useEmergencyNumber } from '@/lib/flow';
 
 import { Button } from './ui';
 
@@ -18,7 +17,7 @@ export function LocateHospitalButton({
     <Button
       label="Locate nearest hospital"
       icon="business"
-      variant="secondary"
+      variant="warning"
       onPress={() => openNearbyHospitals({ reportId, crashId })}
     />
   );
@@ -34,7 +33,7 @@ export function EmergencyActions({
   crashId?: string | null;
   isTest: boolean;
 }) {
-  const emergencyNumber = useApp((s) => s.settings.emergencyNumber);
+  const emergencyNumber = useEmergencyNumber();
   return (
     <View style={{ gap: Spacing.sm }}>
       <Button

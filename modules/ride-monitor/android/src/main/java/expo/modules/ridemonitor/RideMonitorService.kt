@@ -7,8 +7,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.Sensor
@@ -103,7 +105,13 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
   companion object {
     const val ACTION_START = "expo.modules.ridemonitor.START"
     const val ACTION_STOP = "expo.modules.ridemonitor.STOP"
-    private const val RIDE_CHANNEL = "ride_active"
+    /**
+     * Default importance (but silent): Android hides "silent" low-importance
+     * notifications on the lock screen, and this one is the lock-screen ride info.
+     */
+    private const val RIDE_CHANNEL = "ride_live_v2"
+    private const val OLD_RIDE_CHANNEL = "ride_active"
+    private const val NOTIFICATION_REFRESH_MS = 5_000L
     private const val CRASH_CHANNEL = "crash_alert_v1"
     private const val RIDE_NOTIFICATION_ID = 4101
     const val CRASH_NOTIFICATION_ID = 4102
@@ -111,6 +119,10 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     private const val HARD_BRAKE_MPS2 = 3.5
     private const val HARD_BRAKE_MIN_SPEED = 5.0
     private const val MAX_GOOD_ACCURACY_M = 30f
+    /** Slower than this (≈2 km/h) and within [STATIONARY_JITTER_M] of the last point: standing still. */
+    private const val STATIONARY_SPEED_MPS = 0.5
+    private const val STATIONARY_JITTER_M = 15f
+    private val ACCENT = android.graphics.Color.parseColor("#FF6B00")
 
     @Volatile var pendingConfig: RideConfig? = null
   }
@@ -133,12 +145,25 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
   var lastBump: Pair<Long, Double>? = null
   var lastBumpReason: String? = null
   var detectionSuspended = false
+  /** No accelerometer on this phone: the route is logged but crashes can't be detected. */
+  var noSensors = false
   var crash: CrashState? = null
   /** Active after an unanswered crash: SMS/retries, follow-ups, calls, siren. */
   var responder: EmergencyResponder? = null
     private set
 
   private var lastUpdateEmit = 0L
+  /** Latest fix with a speed, kept even when not added to the route (hard-brake maths needs it). */
+  private var lastSpeedFix: RoutePoint? = null
+  private var lastGpsFixAt = 0L
+  private var unlockReceiverRegistered = false
+  /** Unlocking the phone = the rider is handling it (e.g. just took it out of a pocket). */
+  private val unlockReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+      if (intent.action == Intent.ACTION_USER_PRESENT) noteInteraction()
+    }
+  }
+  private var lastNotificationUpdate = 0L
   private var lastGEmit = 0L
   private val countdownRunnable = Runnable { onCountdownExpired() }
 
@@ -156,6 +181,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     if (RideMonitor.service === this && ::config.isInitialized) return START_STICKY
 
     config = cfg
+    startTime = System.currentTimeMillis()
     createChannels()
     ServiceCompat.startForeground(
       this,
@@ -164,7 +190,6 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0,
     )
     RideMonitor.service = this
-    startTime = System.currentTimeMillis()
     detector = CrashDetector(cfg.detector)
 
     val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -174,15 +199,19 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     }
 
     sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
-      sensorManager.registerListener(this, it, 20_000, main)
-    }
+    val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    noSensors = accel == null
+    accel?.let { sensorManager.registerListener(this, it, 20_000, main) }
     sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let {
       sensorManager.registerListener(this, it, 20_000, main)
     }
 
     locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
     startLocation()
+    if (!unlockReceiverRegistered) {
+      ContextCompat.registerReceiver(this, unlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_EXPORTED)
+      unlockReceiverRegistered = true
+    }
     RideMonitor.emit("onRideUpdate", snapshot())
     return START_STICKY
   }
@@ -192,13 +221,16 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) return
     for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
       if (locationManager.allProviders.contains(provider)) {
-        locationManager.requestLocationUpdates(provider, 2000L, 5f, this, Looper.getMainLooper())
+        // No minimum distance: fixes keep coming while stopped, so the detector knows the rider stopped.
+        locationManager.requestLocationUpdates(provider, 2000L, 0f, this, Looper.getMainLooper())
       }
     }
   }
 
   override fun onDestroy() {
     runCatching { sensorManager.unregisterListener(this) }
+    if (unlockReceiverRegistered) runCatching { unregisterReceiver(unlockReceiver) }
+    unlockReceiverRegistered = false
     runCatching { locationManager.removeUpdates(this) }
     main.removeCallbacks(countdownRunnable)
     stopAlarm()
@@ -223,15 +255,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
           RideMonitor.emit("onLiveG", mapOf("g" to liveG, "armed" to detector.isArmed(t)))
         }
         if (detectionSuspended) return
-        when (val e = detector.pushAccel(t, x, y, z)) {
-          is DetectorEvent.Crash -> triggerCrash(e.peakG, "sensor")
-          is DetectorEvent.Bump -> {
-            lastBump = e.impactAt to e.peakG
-            lastBumpReason = e.reason
-            RideMonitor.emit("onBump", mapOf("at" to e.impactAt.toDouble(), "peakG" to e.peakG, "reason" to e.reason))
-          }
-          null -> {}
-        }
+        handleDetectorEvent(detector.pushAccel(t, x, y, z))
       }
       Sensor.TYPE_GYROSCOPE -> if (!detectionSuspended) {
         detector.pushGyro(t, event.values[0].toDouble(), event.values[1].toDouble(), event.values[2].toDouble())
@@ -241,32 +265,59 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
 
   override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
+  private fun handleDetectorEvent(e: DetectorEvent?) {
+    when (e) {
+      is DetectorEvent.Crash -> triggerCrash(e.peakG, "sensor")
+      is DetectorEvent.Bump -> {
+        lastBump = e.impactAt to e.peakG
+        lastBumpReason = e.reason
+        RideMonitor.emit("onBump", mapOf("at" to e.impactAt.toDouble(), "peakG" to e.peakG, "reason" to e.reason))
+        refreshRideNotification(force = true)
+      }
+      null -> {}
+    }
+  }
+
+  /** The rider unlocked or touched the phone: a jolt around now is handling, not a crash. */
+  fun noteInteraction() {
+    if (!::detector.isInitialized || detectionSuspended) return
+    handleDetectorEvent(detector.noteInteraction(System.currentTimeMillis()))
+  }
+
   // ---- Location ------------------------------------------------------------
 
   override fun onLocationChanged(loc: Location) {
     // Prefer GPS; ignore coarse network fixes once GPS is flowing.
     if (loc.provider == LocationManager.NETWORK_PROVIDER && (gpsAccuracy ?: Float.MAX_VALUE) < 50f &&
-      points.isNotEmpty() && loc.time - points.last().t < 10_000
+      loc.time - lastGpsFixAt < 10_000
     ) return
+    if (loc.provider == LocationManager.GPS_PROVIDER) lastGpsFixAt = loc.time
 
     val speed = if (loc.hasSpeed()) loc.speed.toDouble() else null
     if (::detector.isInitialized) detector.pushSpeed(System.currentTimeMillis(), speed)
     val p = RoutePoint(loc.latitude, loc.longitude, loc.time, speed, if (loc.hasAccuracy()) loc.accuracy else null)
     val prev = points.lastOrNull()
-    if (prev != null && (p.accuracy ?: 0f) <= MAX_GOOD_ACCURACY_M) {
-      val out = FloatArray(1)
-      Location.distanceBetween(prev.lat, prev.lng, p.lat, p.lng, out)
-      distanceM += out[0]
-    }
-    if (prev?.speed != null && speed != null) {
-      val dt = (p.t - prev.t) / 1000.0
-      val decel = if (dt > 0) (prev.speed - speed) / dt else 0.0
+    val step = FloatArray(1)
+    if (prev != null) Location.distanceBetween(prev.lat, prev.lng, p.lat, p.lng, step)
+
+    // Hard braking compares consecutive speed readings, including the one that says we've stopped.
+    val prevFix = lastSpeedFix
+    if (prevFix?.speed != null && speed != null) {
+      val dt = (p.t - prevFix.t) / 1000.0
+      val decel = if (dt > 0) (prevFix.speed - speed) / dt else 0.0
       val last = hardBrakes.lastOrNull()
-      if (decel >= HARD_BRAKE_MPS2 && prev.speed >= HARD_BRAKE_MIN_SPEED && (last == null || p.t - last.t > 5000)) {
+      if (decel >= HARD_BRAKE_MPS2 && prevFix.speed >= HARD_BRAKE_MIN_SPEED && (last == null || p.t - last.t > 5000)) {
         hardBrakes.add(HardBrake(p.lat, p.lng, p.t, Math.round(decel * 10) / 10.0))
       }
     }
-    points.add(p)
+    if (speed != null) lastSpeedFix = p
+
+    // Standing still: GPS jitter would otherwise add distance and scribble on the route.
+    val stationary = prev != null && speed != null && speed < STATIONARY_SPEED_MPS && step[0] < STATIONARY_JITTER_M
+    if (!stationary) {
+      if (prev != null && (p.accuracy ?: 0f) <= MAX_GOOD_ACCURACY_M) distanceM += step[0]
+      points.add(p)
+    }
     currentSpeed = speed ?: 0.0
     maxSpeed = maxOf(maxSpeed, currentSpeed)
     gpsAccuracy = p.accuracy
@@ -276,6 +327,15 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       lastUpdateEmit = now
       RideMonitor.emit("onRideUpdate", snapshot())
     }
+    refreshRideNotification()
+  }
+
+  /** Keep the lock-screen ride info current, at most every few seconds (or now, with [force]). */
+  fun refreshRideNotification(force: Boolean = false) {
+    val now = System.currentTimeMillis()
+    if (!force && now - lastNotificationUpdate < NOTIFICATION_REFRESH_MS) return
+    lastNotificationUpdate = now
+    notifySafely(RIDE_NOTIFICATION_ID, rideNotification())
   }
 
   @Deprecated("Deprecated in Java")
@@ -294,6 +354,8 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
       "gpsAccuracy" to gpsAccuracy?.toDouble(),
       "liveG" to liveG,
       "armed" to detector.isArmed(System.currentTimeMillis()),
+      "suspended" to detectionSuspended,
+      "noSensors" to noSensors,
       "pointCount" to points.size,
       "lastPoint" to last?.let { pointMap(it) },
       "hardBrakes" to hardBrakes.map { mapOf("lat" to it.lat, "lng" to it.lng, "t" to it.t.toDouble(), "decel" to it.decel) },
@@ -343,6 +405,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     startAlarm()
     postCrashNotification(c)
     RideMonitor.emit("onCrash", crashMap(c))
+    refreshRideNotification(force = true)
   }
 
   fun resolveCrash(outcome: String) {
@@ -354,11 +417,28 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     notificationManager().cancel(CRASH_NOTIFICATION_ID)
     if (outcome == "fine") resumeDetection()
     RideMonitor.emit("onCrashResolved", crashMap(c))
+    refreshRideNotification(force = true)
   }
 
   fun resumeDetection() {
+    // Never re-arm under a live "Are you OK?" countdown.
+    if (crash?.status == "countdown") return
     detector.reset()
     detectionSuspended = false
+    refreshRideNotification(force = true)
+  }
+
+  /**
+   * Contacts, profile or alert settings changed mid-ride. The detector and the
+   * countdown length stay as they were at ride start; an emergency already in
+   * progress keeps the config it started with.
+   */
+  fun updateConfig(cfg: RideConfig) {
+    // The service reads config on the main thread; swap it there too.
+    main.post {
+      config = cfg.copy(rideId = config.rideId, detector = config.detector, countdownSeconds = config.countdownSeconds)
+      pendingConfig = config
+    }
   }
 
   private fun onCountdownExpired() {
@@ -375,6 +455,7 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
     }
     showBystanderScreen(c)
     RideMonitor.emit("onCrashResolved", crashMap(c))
+    refreshRideNotification(force = true)
   }
 
   /** Rider (or JS "help has arrived") ended the emergency: stop siren, calls, texts. */
@@ -441,10 +522,14 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
   private fun createChannels() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val nm = notificationManager()
+    runCatching { nm.deleteNotificationChannel(OLD_RIDE_CHANNEL) }
     nm.createNotificationChannel(
-      NotificationChannel(RIDE_CHANNEL, "Active ride", NotificationManager.IMPORTANCE_LOW).apply {
-        description = "Shown while a ride is being recorded and crash detection is on"
+      NotificationChannel(RIDE_CHANNEL, "Ride dash", NotificationManager.IMPORTANCE_DEFAULT).apply {
+        description = "Live speed, distance and crash-detection status on the lock screen during a ride"
         setShowBadge(false)
+        setSound(null, null)
+        enableVibration(false)
+        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
       },
     )
     nm.createNotificationChannel(
@@ -464,23 +549,85 @@ class RideMonitorService : Service(), SensorEventListener, LocationListener {
 
   private fun immutable(flags: Int) = flags or PendingIntent.FLAG_IMMUTABLE
 
-  private fun openAppIntent(): PendingIntent {
-    val launch = packageManager.getLaunchIntentForPackage(packageName)!!.apply {
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    }
-    return PendingIntent.getActivity(this, 1, launch, immutable(PendingIntent.FLAG_UPDATE_CURRENT))
+
+  /** Opens a screen of the app through its deep link (ridersblackbox://<path>). */
+  private fun deepLinkIntent(path: String, requestCode: Int): PendingIntent {
+    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("ridersblackbox://$path"))
+      .setPackage(packageName)
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    return PendingIntent.getActivity(this, requestCode, intent, immutable(PendingIntent.FLAG_UPDATE_CURRENT))
   }
 
-  private fun rideNotification(): Notification =
-    NotificationCompat.Builder(this, RIDE_CHANNEL)
+  /**
+   * The lock-screen ride dash in notification form: speed, detection status,
+   * distance / time / top speed, and one line about crashes. Public, so it's
+   * readable without unlocking (no medical info or contacts in it).
+   */
+  private fun rideNotification(): Notification {
+    val kmh = Math.round(currentSpeed * 3.6)
+    val status = when {
+      !::detector.isInitialized -> "Starting"
+      noSensors -> "No motion sensor: crashes can't be detected"
+      detectionSuspended -> "Crash detection paused"
+      detector.isArmed(System.currentTimeMillis()) -> "Crash detection armed"
+      else -> "Standby: arms once you're moving"
+    }
+    // Ride time ticks by itself in the header (chronometer), so it stays right between GPS fixes.
+    val stats = "%s · top %d km/h".format(
+      Locale.US,
+      if (distanceM < 1000) "${Math.round(distanceM)} m" else "%.1f km".format(Locale.US, distanceM / 1000),
+      Math.round(maxSpeed * 3.6),
+    )
+    val crashLine = crashSummary()
+    return NotificationCompat.Builder(this, RIDE_CHANNEL)
       .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-      .setContentTitle("Ride in progress")
-      .setContentText("Crash detection is on. Use Google Maps as normal.")
+      .setContentTitle("$kmh km/h · $status")
+      .setContentText(stats)
+      .setStyle(NotificationCompat.BigTextStyle().bigText("$stats\n$crashLine"))
+      .setSubText("Ride dash")
+      .setColor(ACCENT)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
+      .setSilent(true)
+      .setShowWhen(true)
+      .setWhen(startTime)
+      .setUsesChronometer(true)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)
-      .setContentIntent(openAppIntent())
+      .setContentIntent(deepLinkIntent("ride-dash", 5))
+      .addAction(0, "I NEED HELP", deepLinkIntent("checkin", 6))
+      .addAction(0, "OPEN DASH", deepLinkIntent("ride-dash", 7))
       .build()
+  }
+
+  /** One short line about crashes this ride, for the lock-screen notification and dash. */
+  private fun crashSummary(): String {
+    val fmt = SimpleDateFormat("h:mm a", Locale.getDefault())
+    crash?.let { c ->
+      val at = fmt.format(Date(c.startedAt))
+      val test = if (c.isTest) " (test)" else ""
+      return when (c.status) {
+        "countdown" -> "⚠ Possible crash at $at$test: answer \"Are you OK?\""
+        "fine" -> "Crash check at $at$test: you said you're OK"
+        "help" -> "Crash at $at$test: you asked for help"
+        else ->
+          if (c.smsSent > 0) "⚠ Crash at $at$test: ${c.smsSent} contact${if (c.smsSent > 1) "s" else ""} texted"
+          else "⚠ Crash at $at$test: no response"
+      }
+    }
+    lastBump?.let { (at, g) ->
+      if (System.currentTimeMillis() - at < 10 * 60_000L) {
+        val why = when (lastBumpReason) {
+          "moving_again" -> "you kept moving"
+          "not_moving" -> "not riding"
+          "handling" -> "phone handled"
+          else -> "no fall"
+        }
+        return "Jolt %.1f g at %s, no alert (%s)".format(Locale.US, g, fmt.format(Date(at)), why)
+      }
+    }
+    return "No crashes detected this ride"
+  }
 
   /** The app went to the background mid-countdown: now the rider needs the notification / lock-screen alert. */
   fun onAppBackgrounded() {

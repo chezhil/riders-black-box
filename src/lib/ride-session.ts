@@ -21,6 +21,7 @@ import {
   type BumpReason,
   type NativeCrash,
   type NativeSnapshot,
+  type StartOptions,
 } from '@modules/ride-monitor';
 
 import { buildAlertTemplate } from './alerts';
@@ -32,13 +33,16 @@ import {
 } from './crash-detector';
 import { distanceM } from './geo';
 import { prefetchNearby } from './hospitals';
-import { actions, getState, newId } from './store';
+import { actions, emergencyNumberOf, getState, newId, subscribeApp, type AppData } from './store';
 import type { HardBrakeEvent, LatLng, MedicalInfo, Ride, RoutePoint } from './types';
 
 const SENSOR_INTERVAL_MS = 20; // 50 Hz
 const HARD_BRAKE_MPS2 = 3.5; // ~0.35 g sustained deceleration
 const HARD_BRAKE_MIN_SPEED = 5; // m/s (18 km/h)
 const MAX_GOOD_ACCURACY_M = 30;
+/** Slower than this (≈2 km/h) and within STATIONARY_JITTER_M of the last point: standing still. */
+const STATIONARY_SPEED_MPS = 0.5;
+const STATIONARY_JITTER_M = 15;
 const KEEP_AWAKE_TAG = 'active-ride';
 
 /** True when rides keep running in the background (Android build with the native module). */
@@ -58,6 +62,10 @@ export type RideSnapshot = {
   /** Live acceleration magnitude in g, for the monitoring indicator. */
   liveG: number;
   monitoring: boolean;
+  /** Crash detection is paused because a crash / injury flow is open. */
+  suspended: boolean;
+  /** This phone has no accelerometer: the ride is logged but crashes can't be detected. */
+  noSensors: boolean;
   /** Crash detection is armed: the rider has been moving recently (or motion gating is off). */
   armed: boolean;
   lastBump: { at: number; peakG: number; reason: BumpReason } | null;
@@ -95,6 +103,8 @@ const IDLE: RideSnapshot = {
   gpsAccuracy: null,
   liveG: 1,
   monitoring: false,
+  suspended: false,
+  noSensors: false,
   armed: false,
   lastBump: null,
 };
@@ -175,28 +185,20 @@ export const rideSession = {
     const rideId = newId();
 
     if (RideMonitor) {
-      const { settings, contacts, profile } = getState();
-      await RideMonitor.start({
-        rideId,
-        detector: detectorConfig(),
-        countdownSeconds: settings.countdownSeconds,
-        contactPhones: contacts.map((c) => c.phone),
-        contactNames: contacts.map((c) => (c.relationship ? `${c.name} (${c.relationship})` : c.name)),
-        alertTemplate: buildAlertTemplate(),
-        autoSms: true,
-        riderName: profile.name,
-        medicalSummary: settings.includeMedicalInfo ? medicalSummary(profile.medical) : '',
-        autoCall: settings.autoCallContacts,
-        siren: settings.sirenOnNoResponse,
-        emergencyNumber: settings.emergencyNumber,
-        followUps: settings.liveLocation,
-      });
+      await RideMonitor.start(nativeOptions(rideId));
       update({ ...IDLE, active: true, rideId, startTime: Date.now(), monitoring: true });
       return;
     }
 
     update({ ...IDLE, active: true, rideId, startTime: Date.now() });
-    await jsEngine.start();
+    try {
+      await jsEngine.start();
+    } catch (e) {
+      // Don't leave a half-started ride behind (marked active, but no GPS / sensors).
+      jsEngine.stop();
+      update(IDLE);
+      throw e;
+    }
   },
 
   /** Pause crash detection while the "Are you OK?" flow is on screen. */
@@ -205,9 +207,18 @@ export const rideSession = {
     // Native suspends itself when it raises a crash.
   },
 
+  /** The rider touched the app: a jolt around now is them handling the phone, not a crash. */
+  noteInteraction() {
+    if (!snap.active) return;
+    if (RideMonitor) RideMonitor.noteInteraction();
+    else jsEngine.noteInteraction();
+  },
+
+  /** No-op while a native countdown is still running. */
   resumeDetection() {
     if (RideMonitor) RideMonitor.resumeDetection();
     else jsEngine.resume();
+    if (snap.suspended) update({ suspended: false });
   },
 
   /** Help has arrived / rider is safe: stop the siren, auto-calls and follow-up texts. */
@@ -286,6 +297,26 @@ export const rideSession = {
   },
 };
 
+/** Everything the native service needs; also re-sent when contacts / profile / settings change mid-ride. */
+function nativeOptions(rideId: string): StartOptions {
+  const { settings, contacts, profile } = getState();
+  return {
+    rideId,
+    detector: detectorConfig(),
+    countdownSeconds: settings.countdownSeconds,
+    contactPhones: contacts.map((c) => c.phone),
+    contactNames: contacts.map((c) => (c.relationship ? `${c.name} · ${c.relationship}` : c.name)),
+    alertTemplate: buildAlertTemplate(),
+    autoSms: true,
+    riderName: profile.name,
+    medicalSummary: settings.includeMedicalInfo ? medicalSummary(profile.medical) : '',
+    autoCall: settings.autoCallContacts,
+    siren: settings.sirenOnNoResponse,
+    emergencyNumber: emergencyNumberOf(settings),
+    followUps: settings.liveLocation,
+  };
+}
+
 function medicalSummary(m: MedicalInfo) {
   return [
     m.bloodGroup && `Blood group: ${m.bloodGroup}`,
@@ -332,6 +363,8 @@ function applyNativeSnapshot(s: NativeSnapshot, points: RoutePoint[]) {
     gpsAccuracy: s.gpsAccuracy,
     liveG: s.liveG,
     monitoring: true,
+    suspended: s.suspended,
+    noSensors: Boolean(s.noSensors),
     armed: s.armed,
     lastBump: s.lastBump,
   });
@@ -367,7 +400,8 @@ if (RideMonitor) {
     if (snap.active) update({ liveG: g, armed });
   });
   native.addListener('onBump', (b) => update({ lastBump: b }));
-  native.addListener('onCrash', (c) =>
+  native.addListener('onCrash', (c) => {
+    update({ suspended: true });
     emitCrash({
       id: c.id,
       rideId: snap.rideId,
@@ -375,8 +409,8 @@ if (RideMonitor) {
       peakG: c.peakG,
       via: c.via,
       deadline: c.deadline,
-    }),
-  );
+    });
+  });
   native.addListener('onCrashResolved', (c) => {
     if (c.status === 'countdown') return;
     resolvedListeners.forEach((l) =>
@@ -395,12 +429,27 @@ if (RideMonitor) {
   AppState.addEventListener('change', (state) => {
     if (state === 'active') resyncFromNative();
   });
+
+  // Contacts, profile and alert settings edited mid-ride reach the service straight away
+  // (detection sensitivity and the countdown still apply from the next ride).
+  let sent: Pick<AppData, 'contacts' | 'profile' | 'settings'> | null = null;
+  subscribeApp(() => {
+    const { contacts, profile, settings } = getState();
+    if (!snap.active || !snap.rideId || !native.isRunning()) return;
+    if (sent && sent.contacts === contacts && sent.profile === profile && sent.settings === settings) return;
+    sent = { contacts, profile, settings };
+    native.updateConfig(nativeOptions(snap.rideId));
+  });
 }
 
-/** Crash that happened while JS wasn't listening (app reopened mid-countdown). */
-export function pendingNativeCrash(): NativeCrash | null {
+/**
+ * A native crash JS hasn't recorded yet: the app was reopened mid-countdown, or
+ * after the service already escalated it (texted contacts / rider asked for help).
+ */
+export function unseenNativeCrash(): NativeCrash | null {
   const c = RideMonitor?.getCrash() ?? null;
-  return c && c.status === 'countdown' ? c : null;
+  if (!c || c.status === 'fine') return null;
+  return getState().crashes.some((x) => x.id === c.id) ? null : c;
 }
 
 // ---- JS engine (Expo Go / iOS: foreground only) -----------------------------
@@ -412,6 +461,8 @@ const jsEngine = (() => {
   let accelSub: { remove(): void } | null = null;
   let gyroSub: { remove(): void } | null = null;
   let lastGEmit = 0;
+  /** Latest fix with a speed, kept even when not added to the route (hard-brake maths needs it). */
+  let lastSpeedFix: RoutePoint | null = null;
 
   function onDetectorEvent(event: DetectorEvent) {
     if (event.type === 'bump') {
@@ -420,6 +471,7 @@ const jsEngine = (() => {
     }
     suspended = true;
     detector.reset();
+    update({ suspended: true });
     emitCrash({
       id: null,
       rideId: snap.rideId,
@@ -436,26 +488,31 @@ const jsEngine = (() => {
     const point: RoutePoint = { lat, lng, t, speed: speed != null && speed >= 0 ? speed : null };
     const prev = snap.points[snap.points.length - 1];
     detector.pushSpeed(Date.now(), point.speed);
+    const step = prev ? distanceM(prev, point) : 0;
 
-    let added = 0;
-    if (prev && (accuracy ?? 0) <= MAX_GOOD_ACCURACY_M) added = distanceM(prev, point);
-
+    // Hard braking compares consecutive speed readings, including the one that says we've stopped.
     const hardBrakes = [...snap.hardBrakes];
-    if (prev && prev.speed != null && point.speed != null) {
-      const dt = (t - prev.t) / 1000;
-      const decel = dt > 0 ? (prev.speed - point.speed) / dt : 0;
+    const prevFix = lastSpeedFix;
+    if (prevFix && prevFix.speed != null && point.speed != null) {
+      const dt = (t - prevFix.t) / 1000;
+      const decel = dt > 0 ? (prevFix.speed - point.speed) / dt : 0;
       const lastBrake = hardBrakes[hardBrakes.length - 1];
       if (
         decel >= HARD_BRAKE_MPS2 &&
-        prev.speed >= HARD_BRAKE_MIN_SPEED &&
+        prevFix.speed >= HARD_BRAKE_MIN_SPEED &&
         (!lastBrake || t - lastBrake.t > 5000)
       ) {
         hardBrakes.push({ lat, lng, t, decel: Math.round(decel * 10) / 10 });
       }
     }
+    if (point.speed != null) lastSpeedFix = point;
+
+    // Standing still: GPS jitter would otherwise add distance and scribble on the route.
+    const stationary = prev != null && point.speed != null && point.speed < STATIONARY_SPEED_MPS && step < STATIONARY_JITTER_M;
+    const added = !stationary && prev && (accuracy ?? 0) <= MAX_GOOD_ACCURACY_M ? step : 0;
 
     update({
-      points: [...snap.points, point],
+      points: stationary ? snap.points : [...snap.points, point],
       distanceM: snap.distanceM + added,
       currentSpeed: point.speed ?? 0,
       maxSpeed: Math.max(snap.maxSpeed, point.speed ?? 0),
@@ -470,33 +527,64 @@ const jsEngine = (() => {
     async start() {
       await activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
       locationSub = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 2000, distanceInterval: 5 },
+        // No minimum distance: fixes keep coming while stopped, so the detector knows the rider stopped.
+        { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 2000, distanceInterval: 0 },
         onLocation,
       );
       detector.setConfig(detectorConfig());
       detector.reset();
       suspended = false;
-      Accelerometer.setUpdateInterval(SENSOR_INTERVAL_MS);
-      Gyroscope.setUpdateInterval(SENSOR_INTERVAL_MS);
-      accelSub = Accelerometer.addListener(({ x, y, z }) => {
-        const t = Date.now();
-        const g = Math.sqrt(x * x + y * y + z * z);
-        if (t - lastGEmit > 250) {
-          lastGEmit = t;
-          update({ liveG: g, armed: detector.isArmed(t) });
+      lastSpeedFix = null;
+      const [hasAccel, hasGyro] = await Promise.all([
+        Accelerometer.isAvailableAsync().catch(() => false),
+        Gyroscope.isAvailableAsync().catch(() => false),
+      ]);
+      if (!hasAccel) {
+        // Still log the route, but say plainly that crashes can't be detected.
+        update({ noSensors: true });
+        return;
+      }
+      try {
+        Accelerometer.setUpdateInterval(SENSOR_INTERVAL_MS);
+        accelSub = Accelerometer.addListener(({ x, y, z }) => {
+          const t = Date.now();
+          const g = Math.sqrt(x * x + y * y + z * z);
+          if (t - lastGEmit > 250) {
+            lastGEmit = t;
+            update({ liveG: g, armed: detector.isArmed(t) });
+          }
+          if (suspended) return;
+          const event = detector.pushAccel({ t, x, y, z });
+          if (event) onDetectorEvent(event);
+        });
+      } catch (e) {
+        // Reported as available but can't stream (e.g. the web build): treat as no sensor.
+        console.warn('Accelerometer unavailable', e);
+        update({ noSensors: true });
+        return;
+      }
+      // Optional: without a gyroscope the stillness check uses the accelerometer alone.
+      if (hasGyro) {
+        try {
+          Gyroscope.setUpdateInterval(SENSOR_INTERVAL_MS);
+          gyroSub = Gyroscope.addListener(({ x, y, z }) => {
+            if (!suspended) detector.pushGyro({ t: Date.now(), x, y, z });
+          });
+        } catch {
+          gyroSub = null;
         }
-        if (suspended) return;
-        const event = detector.pushAccel({ t, x, y, z });
-        if (event) onDetectorEvent(event);
-      });
-      gyroSub = Gyroscope.addListener(({ x, y, z }) => {
-        if (!suspended) detector.pushGyro({ t: Date.now(), x, y, z });
-      });
+      }
       update({ monitoring: true });
     },
     suspend() {
       suspended = true;
       detector.reset();
+      update({ suspended: true });
+    },
+    noteInteraction() {
+      if (suspended) return;
+      const event = detector.noteInteraction(Date.now());
+      if (event) onDetectorEvent(event);
     },
     resume() {
       detector.reset();

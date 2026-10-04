@@ -8,10 +8,12 @@ import { Alert, Linking, PermissionsAndroid, Platform, Switch, View } from 'reac
 
 import { RideMonitor } from '@modules/ride-monitor';
 
-import { Button, Card, Field, Row, Screen, Segmented, T } from '@/components/ui';
+import { Button, Card, Field, Row, Screen, Section, Segmented, T } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
-import { relayConfigured } from '@/lib/alerts';
+import { relayConfigured, stopLocationFollowUps } from '@/lib/alerts';
 import { SENSITIVITY_PRESETS } from '@/lib/crash-detector';
+import { emergencyNumberOf } from '@/lib/flow';
+import { clearHospitalCache } from '@/lib/hospitals';
 import { rideSession } from '@/lib/ride-session';
 import { actions, useApp } from '@/lib/store';
 import type { Sensitivity } from '@/lib/types';
@@ -70,8 +72,11 @@ export default function SettingsScreen() {
           text: 'Delete everything',
           style: 'destructive',
           onPress: async () => {
+            stopLocationFollowUps();
+            rideSession.endEmergency();
             await rideSession.stop();
             await actions.clearAll();
+            clearHospitalCache();
             router.replace('/onboarding');
           },
         },
@@ -85,7 +90,7 @@ export default function SettingsScreen() {
     <Screen>
       <T.Title>Settings</T.Title>
 
-      <T.Label>Crash detection</T.Label>
+      <Section>Crash detection</Section>
       <Card>
         <T.Body style={{ fontWeight: '700' }}>Sensitivity</T.Body>
         <Segmented
@@ -100,7 +105,7 @@ export default function SettingsScreen() {
         <T.Dim>{SENSITIVITY_HELP[settings.sensitivity]}</T.Dim>
         <ToggleRow
           title="Only detect while riding"
-          body="Crash detection turns on once GPS shows you moving (above ~11 km/h). Stops false alarms from handling the phone. Turn off only to test detection at a standstill."
+          body="Crash detection turns on once GPS shows you moving (above ~11 km/h) and pauses when you stop, so taking the phone out at a light or when you arrive never counts. Turn off only to test detection at a standstill."
           value={settings.detectOnlyWhenMoving}
           onChange={(detectOnlyWhenMoving) => actions.updateSettings({ detectOnlyWhenMoving })}
         />
@@ -123,7 +128,7 @@ export default function SettingsScreen() {
         />
       </Card>
 
-      <T.Label>Alerts</T.Label>
+      <Section>Alerts</Section>
       <Card>
         <ToggleRow
           title="Live location follow-ups"
@@ -154,7 +159,11 @@ export default function SettingsScreen() {
           value={settings.emergencyNumber}
           keyboardType="phone-pad"
           onChangeText={(emergencyNumber) => actions.updateSettings({ emergencyNumber: emergencyNumber.trim() })}
-          hint="112 works across India and most of the world."
+          hint={
+            settings.emergencyNumber.trim()
+              ? '112 works across India and most of the world.'
+              : `Left blank, ${emergencyNumberOf(settings)} is used.`
+          }
         />
         <Row style={{ marginTop: Spacing.xs }}>
           <Ionicons
@@ -174,7 +183,7 @@ export default function SettingsScreen() {
 
       {RideMonitor && (
         <>
-          <T.Label>Background protection</T.Label>
+          <Section>Background protection</Section>
           <Card>
             <T.Dim>
               These keep crash detection working while you use Google Maps or the screen is off.
@@ -210,11 +219,11 @@ export default function SettingsScreen() {
 
       {Platform.OS === 'android' && (
         <>
-          <T.Label>Backup: Android Emergency SOS</T.Label>
+          <Section>Backup: Android Emergency SOS</Section>
           <Card>
             <T.Dim>
               Android has its own SOS that works even if this app can&apos;t: press the power button 5 times to call{' '}
-              {settings.emergencyNumber} and share your location. Also add your medical info and contacts to Android&apos;s
+              {emergencyNumberOf(settings)} and share your location. Also add your medical info and contacts to Android&apos;s
               emergency information so they show on the lock screen.
             </T.Dim>
             <T.Dim style={{ fontSize: 12 }}>Settings → Safety &amp; emergency → Emergency SOS / Medical information</T.Dim>
@@ -223,7 +232,7 @@ export default function SettingsScreen() {
         </>
       )}
 
-      <T.Label>Permissions</T.Label>
+      <Section>Permissions</Section>
       <Card>
         <PermRow label="Location" ok={perms?.location} />
         <PermRow label="Motion sensors" ok={perms?.motion} />
@@ -239,7 +248,7 @@ export default function SettingsScreen() {
         </Row>
       </Card>
 
-      <T.Label>Privacy</T.Label>
+      <Section>Privacy</Section>
       <Card>
         <T.Dim>
           Everything (rides, routes, incidents, contacts, medical info) is stored only on this phone. Location is

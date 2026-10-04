@@ -1,13 +1,36 @@
-import { DarkTheme, Stack, ThemeProvider, router } from 'expo-router';
+import { BarlowCondensed_600SemiBold } from '@expo-google-fonts/barlow-condensed/600SemiBold';
+import { BarlowCondensed_700Bold } from '@expo-google-fonts/barlow-condensed/700Bold';
+import { BarlowCondensed_800ExtraBold_Italic } from '@expo-google-fonts/barlow-condensed/800ExtraBold_Italic';
+import { BarlowCondensed_900Black_Italic } from '@expo-google-fonts/barlow-condensed/900Black_Italic';
+import { useFonts } from 'expo-font';
+import { DarkTheme, Stack, ThemeProvider, router, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { AppState, View } from 'react-native';
 
-import { Colors } from '@/constants/theme';
-import { pendingNativeCrash, rideSession, type CrashTrigger } from '@/lib/ride-session';
+import { RideMonitor } from '@modules/ride-monitor';
+
+import { Colors, Fonts } from '@/constants/theme';
+import { rideSession, unseenNativeCrash, type CrashTrigger } from '@/lib/ride-session';
 import { actions, getState, newId, useApp } from '@/lib/store';
 
 SplashScreen.preventAutoHideAsync();
+
+/**
+ * Screens allowed to show over the lock screen: the ride dash, and the crash /
+ * help flow (the same info the native bystander screen shows). Leaving them
+ * while locked drops back to the lock screen, so the rest of the app (contacts,
+ * medical card, settings, history) always needs an unlock.
+ */
+const LOCK_SCREEN_ROUTES = new Set([
+  '/ride-dash',
+  '/crash-alert',
+  '/checkin',
+  '/outcome/emergency',
+  '/outcome/hospitals',
+  '/outcome/first-aid',
+]);
 
 const theme = {
   ...DarkTheme,
@@ -23,10 +46,35 @@ const theme = {
 
 export default function RootLayout() {
   const loaded = useApp((s) => s.loaded);
+  // A font that fails to load falls back to the system face; never block on it.
+  const [fontsLoaded, fontError] = useFonts({
+    BarlowCondensed_600SemiBold,
+    BarlowCondensed_700Bold,
+    BarlowCondensed_800ExtraBold_Italic,
+    BarlowCondensed_900Black_Italic,
+  });
+  const fontsReady = fontsLoaded || fontError != null;
+  // Read inside the crash listeners below, which are set up once.
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
+
+  const rideActive = useSyncExternalStore(rideSession.subscribe, () => rideSession.getSnapshot().active);
+  useEffect(() => {
+    if (!RideMonitor) return;
+    const allowed = LOCK_SCREEN_ROUTES.has(pathname) && (rideActive || pathname === '/crash-alert');
+    RideMonitor.setShowWhenLocked(allowed).catch(() => {});
+  }, [pathname, rideActive]);
 
   useEffect(() => {
-    actions.load().finally(() => SplashScreen.hideAsync());
+    actions.load();
   }, []);
+
+  useEffect(() => {
+    if (loaded && fontsReady) SplashScreen.hideAsync();
+  }, [loaded, fontsReady]);
 
   // Any detected (or simulated) crash opens the full-screen "Are you OK?" alert.
   useEffect(() => {
@@ -64,39 +112,71 @@ export default function RootLayout() {
       });
     });
 
-    // Reopened the app mid-countdown (e.g. from the notification) before JS saw the event.
-    const pending = pendingNativeCrash();
-    const pendingTimer =
-      pending && !getState().crashes.some((c) => c.id === pending.id)
-        ? setTimeout(() =>
-            open({
-              id: pending.id,
-              rideId: rideSession.getSnapshot().rideId,
-              location: pending.lat != null && pending.lng != null ? { lat: pending.lat, lng: pending.lng } : null,
-              peakG: pending.peakG,
-              via: pending.via,
-              deadline: pending.deadline,
-            }),
-          300,
-          )
-        : null;
+    // Reopened the app (e.g. from the notification or the lock-screen alert) after the
+    // service raised a crash JS never saw: mid-countdown, or already escalated.
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+    const catchUp = () => {
+      const c = unseenNativeCrash();
+      if (!c || pendingTimer) return;
+      pendingTimer = setTimeout(() => {
+        pendingTimer = null;
+        if (getState().crashes.some((x) => x.id === c.id)) return;
+        const location = c.lat != null && c.lng != null ? { lat: c.lat, lng: c.lng } : null;
+        const rideId = rideSession.getSnapshot().rideId;
+        if (c.status === 'countdown') {
+          open({ id: c.id, rideId, location, peakG: c.peakG, via: c.via, deadline: c.deadline });
+          return;
+        }
+        // 'alerted' (no response: contacts texted, siren, calls) or 'help' (asked from the lock screen).
+        const alerted = c.status === 'alerted';
+        actions.addCrash({
+          id: c.id,
+          rideId,
+          timestamp: c.startedAt,
+          location,
+          detectedVia: c.via,
+          peakG: c.peakG,
+          response: alerted ? 'no_response' : 'needs_help',
+          contactsNotified: alerted && c.smsSent > 0,
+          notifyChannel: alerted && c.smsSent > 0 ? 'sim' : 'none',
+        });
+        // Already in the incident flow (e.g. the lock screen's "Locate nearest hospital"
+        // opened Nearby help): record the crash but don't cover that screen.
+        const path = pathnameRef.current;
+        if (path.startsWith('/outcome') || path === '/checkin' || path === '/crash-alert') return;
+        router.push({ pathname: '/checkin', params: { crashId: c.id, auto: alerted ? '1' : '' } });
+      }, 300);
+    };
+    catchUp();
+    const appState = AppState.addEventListener('change', (state) => {
+      if (state === 'active') catchUp();
+    });
     return () => {
       if (pendingTimer) clearTimeout(pendingTimer);
+      appState.remove();
       offCrash();
       offResolved();
     };
   }, [loaded]);
 
-  if (!loaded) return null;
+  if (!loaded || !fontsReady) return null;
 
   return (
     <ThemeProvider value={theme}>
       <StatusBar style="light" />
+      {/* Any touch = the rider is handling the phone: a jolt now isn't a crash. */}
+      <View
+        style={{ flex: 1 }}
+        onStartShouldSetResponderCapture={() => {
+          rideSession.noteInteraction();
+          return false; // only listening: the touch still goes to whatever was tapped
+        }}>
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: Colors.bg },
           headerTintColor: Colors.text,
-          headerTitleStyle: { fontWeight: '700' },
+          headerTitleStyle: { fontFamily: Fonts.displayBold, fontSize: 22 },
+          headerShadowVisible: false,
           contentStyle: { backgroundColor: Colors.bg },
         }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -111,7 +191,9 @@ export default function RootLayout() {
         <Stack.Screen name="outcome/hospitals" options={{ title: 'Nearby help' }} />
         <Stack.Screen name="outcome/emergency" options={{ headerShown: false, gestureEnabled: false }} />
         <Stack.Screen name="ride/[id]" options={{ title: 'Ride' }} />
+        <Stack.Screen name="ride-dash" options={{ headerShown: false, animation: 'fade' }} />
       </Stack>
+      </View>
     </ThemeProvider>
   );
 }

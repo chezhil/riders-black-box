@@ -2,12 +2,15 @@
  * Threshold-based fall/crash detector.
  *
  * Only ARMED while the rider is actually riding: GPS speed >= `minSpeedMps` at
- * some point in the last 30 s. Waving the phone around at a standstill never
- * arms it. (Can be disabled with `requireMotion: false` for bench testing.)
+ * some point in the last 30 s, AND not stopped since (GPS below ~5 km/h for
+ * 4 s). A crash happens at speed, so pulling the phone out of a pocket at a
+ * red light never counts. (Can be disabled with `requireMotion: false` for
+ * bench testing.)
  *
  * A crash is the sequence:
  *   0. NOT HANDLING — the 2 s before the impact weren't a burst of repeated
- *                    jolts (someone shaking / fiddling with the phone).
+ *                    jolts (someone shaking / fiddling with the phone), and
+ *                    nobody unlocked or touched the phone around it.
  *   1. IMPACT      — acceleration magnitude spikes above `impactG`.
  *   2. SETTLE      — ignore the tumble for `settleMs` after the impact.
  *   3. STILLNESS   — for `stillMs`, the phone is (nearly) motionless: low variance
@@ -15,6 +18,10 @@
  *   4. ORIENTATION — the gravity direction after the fall differs from the one
  *                    before it by at least `orientationDeg` (the bike / rider went
  *                    down). A very hard impact (>= 2x impactG) skips this check.
+ *   5. STOPPED     — a GPS reading from 3 s or more after the impact shows the
+ *                    rider is no longer riding (a pothole, then the phone settling
+ *                    at a new angle in a pocket, is otherwise indistinguishable).
+ *                    No reading within ~2.5 s of the stillness window: alert anyway.
  *
  * If motion resumes during the stillness window it was a pothole / dropped
  * phone that was picked up, and it is reported as a "bump" instead.
@@ -73,6 +80,19 @@ type Vec = [number, number, number];
 const PRE_WINDOW_MS = 2000;
 const PRE_GUARD_MS = 250;
 const MOTION_WINDOW_MS = 30_000;
+/** Below this GPS speed (≈5 km/h, walking pace) the rider counts as stopped… */
+const STOP_SPEED_MPS = 1.5;
+/** …once it has lasted this long. Long enough to ride through a GPS glitch, short enough for a red light. */
+const STOPPED_MS = 4000;
+/** An impact this soon after the rider unlocked or touched the phone is them handling it. */
+const INTERACTION_MS = 2000;
+/**
+ * GPS readings from this long after an impact say whether the rider is still riding
+ * (a pothole) or has stopped (a crash). Earlier readings can still carry the pre-crash speed.
+ */
+const SPEED_CHECK_AFTER_MS = 3000;
+/** How long past the stillness window to wait for that reading before alerting anyway. */
+const GPS_GRACE_MS = 2500;
 
 const mag = (x: number, y: number, z: number) => Math.sqrt(x * x + y * y + z * z);
 
@@ -106,7 +126,16 @@ export class CrashDetector {
   private window: AccelSample[] = [];
   private gyroWindow: number[] = [];
   private lastMovingAt = -Infinity;
+  /** Start of the current run of slow GPS readings, or null while moving. */
+  private slowSince: number | null = null;
+  private lastInteractionAt = -Infinity;
   private lastIgnoredAt = -Infinity;
+  /** A GPS reading came in late enough after the impact to judge it… */
+  private speedSeenAfterImpact = false;
+  /** …and it showed the rider still riding. */
+  private movedAfterImpact = false;
+  /** Looked like a crash; waiting for that GPS reading before alerting. */
+  private pending: { orientationChangeDeg: number } | null = null;
 
   constructor(config: DetectorConfig = SENSITIVITY_PRESETS.medium) {
     this.config = config;
@@ -128,15 +157,39 @@ export class CrashDetector {
     this.gyroWindow = [];
     this.preGravity = null;
     this.peakG = 0;
+    this.speedSeenAfterImpact = false;
+    this.movedAfterImpact = false;
+    this.pending = null;
   }
 
   /** Feed GPS speed (m/s) so the detector knows whether the rider is riding. */
   pushSpeed(t: number, speedMps: number | null) {
-    if (speedMps != null && speedMps >= this.config.minSpeedMps) this.lastMovingAt = t;
+    if (speedMps == null) return; // no speed in this fix: tells us nothing
+    if (this.phase === 'impact' && t >= this.impactAt + SPEED_CHECK_AFTER_MS) {
+      this.speedSeenAfterImpact = true;
+      if (speedMps >= this.config.minSpeedMps) this.movedAfterImpact = true;
+    }
+    if (speedMps >= this.config.minSpeedMps) this.lastMovingAt = t;
+    if (speedMps < STOP_SPEED_MPS) this.slowSince ??= t;
+    else this.slowSince = null;
+  }
+
+  /** The rider has come to a stop (slow GPS readings for a few seconds). */
+  isStopped(t: number) {
+    return this.slowSince != null && t - this.slowSince >= STOPPED_MS;
   }
 
   isArmed(t: number) {
-    return !this.config.requireMotion || t - this.lastMovingAt <= MOTION_WINDOW_MS;
+    return !this.config.requireMotion || (t - this.lastMovingAt <= MOTION_WINDOW_MS && !this.isStopped(t));
+  }
+
+  /**
+   * The rider unlocked or touched the phone: a spike around now is them handling
+   * it (e.g. taking it out of a pocket), not a crash. Ends an impact being evaluated.
+   */
+  noteInteraction(t: number): DetectorEvent | null {
+    this.lastInteractionAt = t;
+    return this.phase === 'impact' ? this.finishAsBump('handling') : null;
   }
 
   pushGyro(s: GyroSample) {
@@ -157,7 +210,10 @@ export class CrashDetector {
     if (this.phase === 'idle') {
       if (g >= c.impactG) {
         if (!this.isArmed(s.t)) return this.ignore(s.t, g, 'not_moving');
-        if (countPeaks(this.history, s.t, c.handlingPeakG) >= c.handlingPeaks) {
+        if (
+          s.t - this.lastInteractionAt < INTERACTION_MS ||
+          countPeaks(this.history, s.t, c.handlingPeakG) >= c.handlingPeaks
+        ) {
           return this.ignore(s.t, g, 'handling');
         }
         this.phase = 'impact';
@@ -172,6 +228,10 @@ export class CrashDetector {
     }
 
     // phase === 'impact'
+    // GPS says the rider is still riding along: a pothole or the phone shifting in a pocket.
+    if (this.movedAfterImpact) return this.finishAsBump('moving_again');
+    if (this.pending) return this.confirmCrash(s.t);
+
     const stillStart = this.impactAt + c.settleMs;
     const stillEnd = stillStart + c.stillMs;
 
@@ -205,16 +265,29 @@ export class CrashDetector {
     const veryHard = this.peakG >= c.impactG * 2;
 
     if (orientationChangeDeg >= c.orientationDeg || veryHard) {
-      const event: DetectorEvent = {
-        type: 'crash',
-        impactAt: this.impactAt,
-        peakG: round(this.peakG),
-        orientationChangeDeg: Math.round(orientationChangeDeg),
-      };
-      this.backToIdle();
-      return event;
+      this.pending = { orientationChangeDeg };
+      return this.confirmCrash(s.t);
     }
     return this.finishAsBump('no_fall');
+  }
+
+  /**
+   * It looked like a crash; alert once GPS confirms the rider stopped. No GPS reading
+   * yet (weak signal, tunnel)? Wait briefly, then alert anyway: missing a crash is worse.
+   */
+  private confirmCrash(t: number): DetectorEvent | null {
+    const c = this.config;
+    if (this.movedAfterImpact) return this.finishAsBump('moving_again');
+    const stillEnd = this.impactAt + c.settleMs + c.stillMs;
+    if (c.requireMotion && !this.speedSeenAfterImpact && t < stillEnd + GPS_GRACE_MS) return null;
+    const event: DetectorEvent = {
+      type: 'crash',
+      impactAt: this.impactAt,
+      peakG: round(this.peakG),
+      orientationChangeDeg: Math.round(this.pending?.orientationChangeDeg ?? 90),
+    };
+    this.backToIdle();
+    return event;
   }
 
   private finishAsBump(reason: BumpReason): DetectorEvent {

@@ -4,26 +4,39 @@ import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Button, Card, Disclaimer, Row, Screen, T, TestBanner } from '@/components/ui';
-import { Colors, Spacing } from '@/constants/theme';
+import { Button, Card, Disclaimer, HazardStripes, Row, Screen, T, TestBanner } from '@/components/ui';
+import { Colors, Fonts, Spacing } from '@/constants/theme';
 import { notifyContacts, relayConfigured, startLocationFollowUps, type NotifyResult } from '@/lib/alerts';
 import { LocateHospitalButton } from '@/components/emergency-actions';
-import { callContact, callEmergencyNumber, finishIncident, useIsTest } from '@/lib/flow';
+import {
+  callContact,
+  callEmergencyNumber,
+  finishIncident,
+  markIncidentNotified,
+  markSevereAlertSent,
+  severeAlertAlreadySent,
+  useEmergencyNumber,
+  useIsTest,
+} from '@/lib/flow';
 import { mapsLink } from '@/lib/geo';
 import { backgroundCapable, rideSession } from '@/lib/ride-session';
-import { actions, useApp } from '@/lib/store';
+import { useApp } from '@/lib/store';
 import type { LatLng } from '@/lib/types';
 
 export default function Emergency() {
   const { reportId, crashId } = useLocalSearchParams<{ reportId?: string; crashId?: string }>();
   const report = useApp((s) => s.reports.find((r) => r.id === reportId));
-  const emergencyNumber = useApp((s) => s.settings.emergencyNumber);
+  const crash = useApp((s) => s.crashes.find((c) => c.id === (crashId || report?.crashEventId)));
+  const emergencyNumber = useEmergencyNumber();
   const contacts = useApp((s) => s.contacts);
-  const [location, setLocation] = useState<LatLng | null>(report?.location ?? null);
+  const [location, setLocation] = useState<LatLng | null>(report?.location ?? crash?.location ?? null);
   const [address, setAddress] = useState<string | null>(null);
+  // Another Emergency screen for this incident may already have alerted contacts.
+  const [alreadyAlerted] = useState(() => severeAlertAlreadySent({ reportId, crashId }));
   const [notify, setNotify] = useState<NotifyResult | 'sending' | null>(null);
-  const sent = useRef(false);
+  const sent = useRef(alreadyAlerted);
   const isTest = useIsTest({ reportId, crashId });
+  const incident = { reportId, crashId };
 
   const callEmergency = () => callEmergencyNumber(emergencyNumber, isTest);
 
@@ -52,7 +65,7 @@ export default function Emergency() {
     setNotify('sending');
     const result = await notifyContacts('severe', loc, { test: isTest });
     setNotify(result);
-    if (reportId && result.delivered) actions.updateReport(reportId, { contactsNotified: true });
+    if (result.delivered) markIncidentNotified(incident, { channel: result.channel });
     if (!isTest) startLocationFollowUps(() => rideSession.currentLocation());
   }
 
@@ -62,6 +75,8 @@ export default function Emergency() {
     const go = () => {
       if (sent.current) return;
       sent.current = true;
+      // Demo crashes send nothing, so there's nothing to deduplicate.
+      if (!isTest) markSevereAlertSent(incident);
       sendAlert(location);
     };
     if (location) go();
@@ -73,7 +88,9 @@ export default function Emergency() {
   }, [location]);
 
   const notifyText =
-    notify !== 'sending' && notify?.skippedTest
+    notify == null && alreadyAlerted
+      ? 'SEVERE alert already sent for this incident.'
+      : notify !== 'sending' && notify?.skippedTest
       ? `Test: no SMS sent. In a real emergency your ${contacts.length} contact${contacts.length === 1 ? ' is' : 's are'} texted automatically.`
       : notify === 'sending'
       ? 'Alerting your emergency contacts…'
@@ -88,7 +105,8 @@ export default function Emergency() {
 
   return (
     <Screen edges={['top', 'bottom', 'left', 'right']} style={{ backgroundColor: '#140607' }}>
-      <View style={{ alignItems: 'center', gap: Spacing.xs, marginTop: Spacing.md }}>
+      <HazardStripes color={isTest ? Colors.info : Colors.danger} height={10} />
+      <View style={{ alignItems: 'center', gap: Spacing.xs }}>
         <T.Label style={{ color: Colors.danger }}>Emergency</T.Label>
         <T.Title style={{ textAlign: 'center' }}>Call for help now</T.Title>
       </View>
@@ -136,7 +154,9 @@ export default function Emergency() {
 
       <Card style={{ borderColor: notifyOk ? Colors.ok : Colors.border }}>
         <Row>
-          {notify === 'sending' || notify == null ? (
+          {notify == null && alreadyAlerted ? (
+            <Ionicons name="checkmark-circle" size={22} color={Colors.ok} />
+          ) : notify === 'sending' || notify == null ? (
             <ActivityIndicator color={Colors.accent} />
           ) : (
             <Ionicons
@@ -150,7 +170,7 @@ export default function Emergency() {
         {contacts.length > 0 && (
           <T.Dim>{contacts.map((c) => `${c.name} (${c.relationship || 'contact'})`).join(', ')}</T.Dim>
         )}
-        {notify !== 'sending' && notify != null && !notify.skippedTest && (
+        {((notify !== 'sending' && notify != null && !notify.skippedTest) || (notify == null && alreadyAlerted)) && (
           <Button label="Send alert again" icon="refresh" variant="secondary" onPress={() => sendAlert(location)} />
         )}
         {!relayConfigured && !backgroundCapable && (
@@ -162,8 +182,8 @@ export default function Emergency() {
 
       {contacts[0] && (
         <Button
-          label={`Call ${contacts[0].name}`}
-          icon="person"
+          label={contacts[0].relationship ? `${contacts[0].name} · ${contacts[0].relationship}` : contacts[0].name}
+          icon="call"
           variant="secondary"
           size="lg"
           onPress={() => callContact(contacts[0].phone)}
@@ -194,6 +214,6 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     elevation: 12,
   },
-  callText: { color: '#FFFFFF', fontSize: 40, fontWeight: '900', letterSpacing: -1 },
-  callSub: { color: '#FFD6D6', fontSize: 16, fontWeight: '700' },
+  callText: { color: '#FFFFFF', fontFamily: Fonts.display, fontSize: 56, lineHeight: 60, textTransform: 'uppercase' },
+  callSub: { color: '#FFD6D6', fontFamily: Fonts.label, fontSize: 17, letterSpacing: 1.5, textTransform: 'uppercase' },
 });

@@ -182,7 +182,13 @@ async function searchLive(center: LatLng): Promise<Facility[]> {
   const fallback = nominatimNearby(center).catch(() => null);
   try {
     let found = await overpass(center, 8000);
-    if (found.length < 3) found = await overpass(center, 30000);
+    if (found.length < 3) {
+      // Keep the nearby results if the wider search fails.
+      found = await overpass(center, 30000).catch((e) => {
+        if (found.length === 0) throw e;
+        return found;
+      });
+    }
     if (found.length > 0) return tidy(found);
   } catch (e) {
     console.warn('Overpass failed, using Nominatim', e);
@@ -203,25 +209,35 @@ const PREFETCH_RETRY_MS = 2 * 60_000;
 
 type Cache = { center: LatLng; fetchedAt: number; facilities: Facility[] };
 let cache: Cache | null = null;
-let cacheLoaded = false;
+/** One shared read, so a caller arriving mid-load waits for it instead of seeing no cache. */
+let cacheLoad: Promise<Cache | null> | null = null;
 let prefetching = false;
 let lastPrefetchAttempt = 0;
 
-async function loadCache() {
-  if (cacheLoaded) return cache;
-  cacheLoaded = true;
-  try {
-    const raw = await AsyncStorage.getItem(CACHE_KEY);
-    if (raw && !cache) cache = JSON.parse(raw) as Cache;
-  } catch {
-    // Ignore a corrupt cache.
-  }
-  return cache;
+function loadCache() {
+  cacheLoad ??= (async () => {
+    try {
+      const raw = await AsyncStorage.getItem(CACHE_KEY);
+      if (raw && !cache) cache = JSON.parse(raw) as Cache;
+    } catch {
+      // Ignore a corrupt cache.
+    }
+    return cache;
+  })();
+  // A live search may have refreshed the cache since the read.
+  return cacheLoad.then(() => cache);
 }
 
 function saveCache(center: LatLng, facilities: Facility[]) {
   cache = { center, fetchedAt: Date.now(), facilities };
   AsyncStorage.setItem(CACHE_KEY, JSON.stringify(cache)).catch(() => {});
+}
+
+/** Forget the saved hospitals (and where they were fetched), e.g. after "Delete all data". */
+export function clearHospitalCache() {
+  cache = null;
+  cacheLoad = null;
+  lastPrefetchAttempt = 0;
 }
 
 /** Cached facilities near `location`, with distances recomputed from there. */

@@ -172,7 +172,7 @@ class CrashAlertActivity : Activity() {
       LinearLayout.LayoutParams(MATCH_PARENT, dp(76)).apply { topMargin = dp(16) },
     )
     root.addView(
-      button("Locate nearest hospital", CARD, Color.WHITE, 18f, stroke = BORDER) { openNearbyHospitals(c) },
+      button("Locate nearest hospital", YELLOW, Color.parseColor("#1A1400"), 18f) { openNearbyHospitals(c) },
       LinearLayout.LayoutParams(MATCH_PARENT, dp(60)).apply { topMargin = dp(10) },
     )
 
@@ -180,7 +180,7 @@ class CrashAlertActivity : Activity() {
       if (phone.isBlank()) return@forEachIndexed
       val name = cfg.contactNames.getOrNull(i)?.ifBlank { null } ?: phone
       root.addView(
-        button("Call $name (emergency contact)", CARD, Color.WHITE, 17f, stroke = BORDER) {
+        callButton(name) {
           // Calling your own emergency contact is always allowed, demo or not:
           // demos only block automatic texts/calls, 112 and hospitals.
           service?.responder?.callNow(name, phone) ?: callDirect(phone)
@@ -195,8 +195,9 @@ class CrashAlertActivity : Activity() {
     root.addView(sirenButton, LinearLayout.LayoutParams(MATCH_PARENT, dp(52)).apply { topMargin = dp(18) })
 
     root.addView(
-      button("I'm the rider: close", BG, DIM, 15f) { openAppAndFinish() },
-      LinearLayout.LayoutParams(MATCH_PARENT, dp(52)).apply { topMargin = dp(6) },
+      // A real outlined button (not bare text), so the rider can find the way back into the app.
+      button("I'm the rider: close", CARD, Color.WHITE, 17f, stroke = DIM) { openAppAndFinish() },
+      LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(12) },
     )
 
     setContentView(ScrollView(this).apply { setBackgroundColor(BG); addView(root) })
@@ -229,8 +230,21 @@ class CrashAlertActivity : Activity() {
     }.onFailure { dial(number) }
   }
 
-  /** Hospitals around the crash in Google Maps (or any maps app). Asks to unlock first. */
+  /**
+   * The app's own "Nearby help" list (hospitals sorted by distance, with call and
+   * directions buttons), opened via the app's deep link. Asks to unlock first.
+   * Falls back to a maps search if the app can't be opened that way.
+   */
   private fun openNearbyHospitals(c: CrashState) {
+    val link = Uri.parse("ridersblackbox://outcome/hospitals?crashId=${Uri.encode(c.id)}")
+    val inApp = Intent(Intent.ACTION_VIEW, link)
+      .setPackage(packageName)
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    if (runCatching { startActivity(inApp) }.isSuccess) return
+    openHospitalsInMaps(c)
+  }
+
+  private fun openHospitalsInMaps(c: CrashState) {
     val last = RideMonitor.service?.points?.lastOrNull()
     val lat = c.lat ?: last?.lat
     val lng = c.lng ?: last?.lng
@@ -281,6 +295,15 @@ class CrashAlertActivity : Activity() {
     letterSpacing = 0.08f
   }
 
+  /** "📞 Name · Role": a phone icon and who it rings, nothing else. */
+  private fun callButton(label: String, onClick: () -> Unit) =
+    button(label, CARD, Color.WHITE, 18f, stroke = BORDER, onClick).apply {
+      setCompoundDrawablesRelativeWithIntrinsicBounds(android.R.drawable.sym_action_call, 0, 0, 0)
+      compoundDrawableTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+      compoundDrawablePadding = dp(8)
+      setPadding(dp(20), 0, dp(20), 0)
+    }
+
   private fun button(label: String, bg: Int, fg: Int, sp: Float, stroke: Int? = null, onClick: () -> Unit) =
     Button(this).apply {
       text = label
@@ -298,6 +321,7 @@ class CrashAlertActivity : Activity() {
     private val BORDER = Color.parseColor("#2A3038")
     private val RED = Color.parseColor("#EF4444")
     private val GREEN = Color.parseColor("#22C55E")
+    private val YELLOW = Color.parseColor("#FFC400")
     private val INFO = Color.parseColor("#38BDF8")
     private val DIM = Color.parseColor("#9AA3AF")
   }

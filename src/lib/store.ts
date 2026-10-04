@@ -50,6 +50,11 @@ export const DEFAULT_SETTINGS: Settings = {
   sirenOnNoResponse: true,
 };
 
+/** The emergency number to dial; never blank, even if the setting was cleared. */
+export function emergencyNumberOf(settings: Pick<Settings, 'emergencyNumber'>) {
+  return settings.emergencyNumber.trim() || DEFAULT_SETTINGS.emergencyNumber;
+}
+
 const DEFAULTS: AppData = {
   loaded: false,
   onboarded: false,
@@ -67,6 +72,11 @@ const listeners = new Set<() => void>();
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+/** Listen for any store change outside React (e.g. to push settings to the native service). */
+export function subscribeApp(listener: () => void) {
+  return subscribe(listener);
 }
 
 export function getState() {
@@ -164,8 +174,11 @@ export const actions = {
     setState({ reports: state.reports.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
   },
 
+  /** Everything the app keeps on this phone, including caches outside the store (e.g. saved hospitals). */
   async clearAll() {
-    await AsyncStorage.multiRemove(PERSISTED.map((k) => PREFIX + k));
+    const keys = await AsyncStorage.getAllKeys().catch(() => [] as readonly string[]);
+    const ours = new Set([...PERSISTED.map((k) => PREFIX + k), ...keys.filter((k) => k.startsWith('rbb:'))]);
+    await AsyncStorage.multiRemove([...ours]);
     state = { ...DEFAULTS, loaded: true };
     listeners.forEach((l) => l());
   },

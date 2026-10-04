@@ -5,7 +5,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Ellipse, G, Rect } from 'react-native-svg';
 
-import { Colors, SeverityColors } from '@/constants/theme';
+import { Colors, Fonts, SeverityColors } from '@/constants/theme';
 import type { BodyPart, Severity } from '@/lib/types';
 
 export type BodyView = 'front' | 'back';
@@ -110,7 +110,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 8,
     color: Colors.textFaint,
-    fontWeight: '800',
-    fontSize: 14,
+    fontFamily: Fonts.displayBold,
+    fontSize: 18,
   },
 });
